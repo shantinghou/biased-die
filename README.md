@@ -1,50 +1,81 @@
-Here's the English translation with a concise "Next Steps" section added:
+# 偏向骰子设计工具
 
-# libigl Python Biased Dice
+这个项目提供了一个用于设计偏向骰子的工具，可以通过优化体素模型来创建一个特定面点数概率更高的骰子。
 
-This project demonstrates how to design a printable biased dice using optimization and inverse design methods with libigl's Python bindings!
+## 项目结构
 
-## Installing Dependencies
-
-1. Create a new environment
-```bash
-conda create --name igl_env python=3.9 --platform osx-64
-conda activate igl_env
+```
+src/
+  ├── biased_dice.py   - 核心优化算法和体素建模
+  ├── visualization.py - 可视化功能
+  └── main.py          - 交互式设计工具入口点
 ```
 
-2. Install dependencies
-```bash
-# Install necessary dependencies
-conda install -c conda-forge numpy eigen boost
+## 功能
 
-# Install libigl using pip
-pip install libigl
+- 基于模拟退火算法的体素模型优化
+- 可调整外壁厚度以确保结构连通性
+- 可视化体素模型、优化历史和概率分布
+- 导出STL格式用于3D打印
+
+## 依赖项
+
+```
+numpy
+scipy
+meshio
+open3d
+scikit-image
+igl
+matplotlib
 ```
 
-## Running the Example
+## 使用方法
 
-### Basic Cube Example
+### 可视化界面
 
 ```bash
-python simple_cube_example.py
+python -m src.main
 ```
 
-This will create a basic cube and display it in the viewer. The program will also save the cube as a `simple_cube.obj` file.
+交互式设计界面将引导您设置目标面、分辨率和其他参数。
 
-## Notes
+### 或者在Python中使用
 
-- Ensure your system meets all system dependencies for libigl, especially OpenGL-related libraries.
-- If you encounter graphics display issues, you may need to check if your GPU drivers are up to date.
-- The Python bindings for libigl are still under active development. If you encounter issues, refer to the official documentation and GitHub repository.
+```python
+from src.biased_dice import design_max_biased_dice, save_to_stl
 
-## Next Steps
+# 设计一个点数6概率最高的骰子
+vertices, faces, voxels, probs, _, _ = design_max_biased_dice(
+    target_face_index=5,  # 0-5对应1-6点
+    resolution=20,        # 体素分辨率
+    max_iterations=5000,  # 优化迭代次数
+    wall_thickness=2      # 外壁厚度
+)
 
-In the upcoming phases of this project, we will:
-1. Implement suitable optimization methods for biasing the dice.
-2. Develop inverse design techniques to achieve desired probability distributions.
-3. Refine the mesh generation process for 3D printing compatibility.
+# 保存为STL文件用于3D打印
+save_to_stl(vertices, faces, "biased_dice.stl")
+```
 
-Stay tuned for updates as we progress towards creating a fully functional biased dice design tool!
+## 算法原理
+
+该工具使用以下技术创建偏向骰子：
+
+1. 从实心立方体开始，迭代移除内部体素
+2. 使用模拟退火算法优化体素分布
+3. 保持外壁厚度固定，确保内部与外壳连通
+4. 计算重心相对于各个面的立体角来估计概率
+5. 最后使用Marching Cubes算法生成3D网格
+
+## 注意事项
+
+- 高分辨率将提供更精确的结果，但会增加计算时间
+- 外壁厚度影响骰子的物理结构和偏向程度
+- 生成的STL文件可以直接用于3D打印
+
+## 许可
+
+MIT
 
 ---
 来自 Perplexity 的回答: pplx.ai/share
