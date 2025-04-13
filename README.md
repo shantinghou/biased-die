@@ -1,59 +1,50 @@
-# Biased Die Project
+Here's the English translation with a concise "Next Steps" section added:
 
-This project uses LibIGL to design and optimize an octahedral die with biased internal density distribution, making it more likely to land on a target face.
+# libigl Python Biased Dice
 
-## Project Structure
+This project demonstrates how to design a printable biased dice using optimization and inverse design methods with libigl's Python bindings!
 
-- `src/` - Source code
-- `include/` - Header files and external libraries
-- `assets/` - 3D models and output files
-- `CMakeLists.txt` - Build configuration
+## Installing Dependencies
 
-## Requirements
-
-- C++17 compiler
-- CMake 3.16+
-- LibIGL (automatically fetched by CMake)
-- Eigen3
-
-## Building the Project
-
+1. Create a new environment
 ```bash
-mkdir build
-cd build
-cmake ..
-make
+conda create --name igl_env python=3.9 --platform osx-64
+conda activate igl_env
 ```
 
-## Running the Program
-
-From the build directory:
-
+2. Install dependencies
 ```bash
-./biased_die
+# Install necessary dependencies
+conda install -c conda-forge numpy eigen boost
+
+# Install libigl using pip
+pip install libigl
 ```
 
-## How It Works
+## Running the Example
 
-1. The program loads or generates an octahedral die model
-2. It creates a tetrahedral mesh of the interior
-3. It optimizes the internal density distribution to bias the die toward a target face
-4. A visual representation shows the shifted center of mass
-5. Optional: Export the model for 3D printing with variable infill
+### Basic Cube Example
 
-## Physics Behind the Bias
+```bash
+python simple_cube_example.py
+```
 
-The program shifts the center of mass toward the opposite face of the target face. When the die is rolled:
-- The heaviest side tends to end up at the bottom
-- This makes the opposite side (our target) more likely to end up on top
+This will create a basic cube and display it in the viewer. The program will also save the cube as a `simple_cube.obj` file.
 
-## Customization
+## Notes
 
-Edit `main.cpp` to change:
-- Target face index
-- Bias strength
-- Density range
+- Ensure your system meets all system dependencies for libigl, especially OpenGL-related libraries.
+- If you encounter graphics display issues, you may need to check if your GPU drivers are up to date.
+- The Python bindings for libigl are still under active development. If you encounter issues, refer to the official documentation and GitHub repository.
 
-## 3D Printing Notes
+## Next Steps
 
-The current implementation exports a density map that can be used with 3D printing software that supports variable infill patterns. Future versions may include direct export to printer-specific formats.
+In the upcoming phases of this project, we will:
+1. Implement suitable optimization methods for biasing the dice.
+2. Develop inverse design techniques to achieve desired probability distributions.
+3. Refine the mesh generation process for 3D printing compatibility.
+
+Stay tuned for updates as we progress towards creating a fully functional biased dice design tool!
+
+---
+来自 Perplexity 的回答: pplx.ai/share
