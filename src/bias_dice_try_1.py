@@ -4,7 +4,6 @@
 # pip install numpy scipy meshio open3d igl trimesh matplotlib
 
 import numpy as np
-import igl
 from scipy.ndimage import label
 import meshio
 import open3d as o3d
@@ -24,30 +23,6 @@ def create_outer_layer_mask(resolution):
     mask[:, 0, :] = mask[:, -1, :] = True
     mask[:, :, 0] = mask[:, :, -1] = True
     return mask
-
-def is_connected(voxels):
-    """check if the empty space is connected (only face-connected voxels count as connected)"""
-    from scipy.ndimage import label
-    # 6-connectivity: only face-connected voxels are considered connected
-    structure = np.array([
-        [[0, 0, 0],
-         [0, 1, 0],
-         [0, 0, 0]],
-        [[0, 1, 0],
-         [1, 1, 1],
-         [0, 1, 0]],
-        [[0, 0, 0],
-         [0, 1, 0],
-         [0, 0, 0]]
-    ], dtype=int)
-    # create a mask, representing the empty space
-    empty_space = (voxels == 0)
-    # if there is no empty space, then it is connected
-    if not np.any(empty_space):
-        return True
-    # label the connected components with 6-connectivity
-    labeled, num_features = label(empty_space, structure=structure)
-    return num_features == 1
 
 def is_cube_shell_intact(voxels):
     """check if the cube shell is intact"""
@@ -138,6 +113,10 @@ def evaluate_solution(voxels, target_probabilities):
     # Simple MSE calculation (original scoring mechanism)
     return np.mean((probs - target_probabilities)**2)
 
+
+# ===========================================
+# Connectivity Check
+# ===========================================
 def is_solid_connected(voxels):
     """check if the solid part (value=1) is connected (only face-connected voxels count as connected)"""
     from scipy.ndimage import label
@@ -159,6 +138,166 @@ def is_solid_connected(voxels):
     # label the connected components with 6-connectivity
     labeled, num_features = label(solid, structure=structure)
     return num_features == 1
+
+def is_connected(voxels):
+    """check if the empty space is connected (only face-connected voxels count as connected)"""
+    from scipy.ndimage import label
+    # 6-connectivity: only face-connected voxels are considered connected
+    structure = np.array([
+        [[0, 0, 0],
+         [0, 1, 0],
+         [0, 0, 0]],
+        [[0, 1, 0],
+         [1, 1, 1],
+         [0, 1, 0]],
+        [[0, 0, 0],
+         [0, 1, 0],
+         [0, 0, 0]]
+    ], dtype=int)
+    # create a mask, representing the empty space
+    empty_space = (voxels == 0)
+    # if there is no empty space, then it is connected
+    if not np.any(empty_space):
+        return True
+    # label the connected components with 6-connectivity
+    labeled, num_features = label(empty_space, structure=structure)
+    return num_features == 1
+
+def ensure_connectivity(voxels):
+    """Helper function to try to ensure both the solid and empty parts are connected"""
+    fixed_voxels = voxels.copy()
+    resolution = voxels.shape[0]
+    center = resolution // 2
+    
+    # First check if the empty space is connected
+    if not is_connected(fixed_voxels):
+        # Try to connect unconnected empty spaces to the main cavity
+        # 1. Find the largest connected component of empty space
+        from scipy.ndimage import label, find_objects
+        empty_space = (fixed_voxels == 0)
+        labeled, num_features = label(empty_space, structure=np.array([
+            [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+            [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+            [[0, 0, 0], [0, 1, 0], [0, 0, 0]]
+        ]))
+        
+        if num_features > 1:
+            # Find sizes of components
+            component_sizes = np.bincount(labeled.ravel())[1:]
+            largest_component = np.argmax(component_sizes) + 1
+            
+            # Connect smaller components to the largest one
+            for i in range(1, resolution-1):
+                for j in range(1, resolution-1):
+                    for k in range(1, resolution-1):
+                        if labeled[i, j, k] > 0 and labeled[i, j, k] != largest_component:
+                            # Create a path to the largest component
+                            # Find the nearest point in the largest component
+                            min_dist = float('inf')
+                            nearest = None
+                            
+                            for ii in range(1, resolution-1):
+                                for jj in range(1, resolution-1):
+                                    for kk in range(1, resolution-1):
+                                        if labeled[ii, jj, kk] == largest_component:
+                                            dist = abs(i-ii) + abs(j-jj) + abs(k-kk)
+                                            if dist < min_dist:
+                                                min_dist = dist
+                                                nearest = (ii, jj, kk)
+                            
+                            if nearest:
+                                # Create a straight path
+                                xi, yi, zi = i, j, k
+                                xf, yf, zf = nearest
+                                
+                                # X direction
+                                while xi != xf:
+                                    xi += 1 if xf > xi else -1
+                                    if 1 <= xi < resolution-1:
+                                        fixed_voxels[xi, yi, zi] = False
+                                
+                                # Y direction
+                                while yi != yf:
+                                    yi += 1 if yf > yi else -1
+                                    if 1 <= yi < resolution-1:
+                                        fixed_voxels[xi, yi, zi] = False
+                                
+                                # Z direction
+                                while zi != zf:
+                                    zi += 1 if zf > zi else -1
+                                    if 1 <= zi < resolution-1:
+                                        fixed_voxels[xi, yi, zi] = False
+                            
+                            # Only do this for one voxel of the component
+                            break
+    
+    # Check if the solid part is connected
+    if not is_solid_connected(fixed_voxels):
+        # Same approach - connect unconnected solid parts
+        from scipy.ndimage import label, find_objects
+        solid = (fixed_voxels == 1)
+        labeled, num_features = label(solid, structure=np.array([
+            [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+            [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+            [[0, 0, 0], [0, 1, 0], [0, 0, 0]]
+        ]))
+        
+        if num_features > 1:
+            # Find sizes of components
+            component_sizes = np.bincount(labeled.ravel())[1:]
+            largest_component = np.argmax(component_sizes) + 1
+            
+            # If the largest component doesn't include the shell, that's a problem
+            shell_component = labeled[0, 0, 0]
+            if shell_component != largest_component:
+                largest_component = shell_component
+            
+            # Connect smaller components to the largest one
+            for i in range(1, resolution-1):
+                for j in range(1, resolution-1):
+                    for k in range(1, resolution-1):
+                        if labeled[i, j, k] > 0 and labeled[i, j, k] != largest_component:
+                            # Create a path to the largest component
+                            # Find the nearest point in the largest component
+                            min_dist = float('inf')
+                            nearest = None
+                            
+                            for ii in range(resolution):
+                                for jj in range(resolution):
+                                    for kk in range(resolution):
+                                        if labeled[ii, jj, kk] == largest_component:
+                                            dist = abs(i-ii) + abs(j-jj) + abs(k-kk)
+                                            if dist < min_dist:
+                                                min_dist = dist
+                                                nearest = (ii, jj, kk)
+                            
+                            if nearest:
+                                # Create a straight path
+                                xi, yi, zi = i, j, k
+                                xf, yf, zf = nearest
+                                
+                                # X direction
+                                while xi != xf:
+                                    xi += 1 if xf > xi else -1
+                                    if 0 <= xi < resolution:
+                                        fixed_voxels[xi, yi, zi] = True
+                                
+                                # Y direction
+                                while yi != yf:
+                                    yi += 1 if yf > yi else -1
+                                    if 0 <= yi < resolution:
+                                        fixed_voxels[xi, yi, zi] = True
+                                
+                                # Z direction
+                                while zi != zf:
+                                    zi += 1 if zf > zi else -1
+                                    if 0 <= zi < resolution:
+                                        fixed_voxels[xi, yi, zi] = True
+                            
+                            # Only do this for one voxel of the component
+                            break
+    
+    return fixed_voxels
 
 # ===========================================
 # Voxel Optimization
@@ -427,141 +566,6 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
 
     return best_voxels
 
-def ensure_connectivity(voxels):
-    """Helper function to try to ensure both the solid and empty parts are connected"""
-    fixed_voxels = voxels.copy()
-    resolution = voxels.shape[0]
-    center = resolution // 2
-    
-    # First check if the empty space is connected
-    if not is_connected(fixed_voxels):
-        # Try to connect unconnected empty spaces to the main cavity
-        # 1. Find the largest connected component of empty space
-        from scipy.ndimage import label, find_objects
-        empty_space = (fixed_voxels == 0)
-        labeled, num_features = label(empty_space, structure=np.array([
-            [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
-            [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
-            [[0, 0, 0], [0, 1, 0], [0, 0, 0]]
-        ]))
-        
-        if num_features > 1:
-            # Find sizes of components
-            component_sizes = np.bincount(labeled.ravel())[1:]
-            largest_component = np.argmax(component_sizes) + 1
-            
-            # Connect smaller components to the largest one
-            for i in range(1, resolution-1):
-                for j in range(1, resolution-1):
-                    for k in range(1, resolution-1):
-                        if labeled[i, j, k] > 0 and labeled[i, j, k] != largest_component:
-                            # Create a path to the largest component
-                            # Find the nearest point in the largest component
-                            min_dist = float('inf')
-                            nearest = None
-                            
-                            for ii in range(1, resolution-1):
-                                for jj in range(1, resolution-1):
-                                    for kk in range(1, resolution-1):
-                                        if labeled[ii, jj, kk] == largest_component:
-                                            dist = abs(i-ii) + abs(j-jj) + abs(k-kk)
-                                            if dist < min_dist:
-                                                min_dist = dist
-                                                nearest = (ii, jj, kk)
-                            
-                            if nearest:
-                                # Create a straight path
-                                xi, yi, zi = i, j, k
-                                xf, yf, zf = nearest
-                                
-                                # X direction
-                                while xi != xf:
-                                    xi += 1 if xf > xi else -1
-                                    if 1 <= xi < resolution-1:
-                                        fixed_voxels[xi, yi, zi] = False
-                                
-                                # Y direction
-                                while yi != yf:
-                                    yi += 1 if yf > yi else -1
-                                    if 1 <= yi < resolution-1:
-                                        fixed_voxels[xi, yi, zi] = False
-                                
-                                # Z direction
-                                while zi != zf:
-                                    zi += 1 if zf > zi else -1
-                                    if 1 <= zi < resolution-1:
-                                        fixed_voxels[xi, yi, zi] = False
-                            
-                            # Only do this for one voxel of the component
-                            break
-    
-    # Check if the solid part is connected
-    if not is_solid_connected(fixed_voxels):
-        # Same approach - connect unconnected solid parts
-        from scipy.ndimage import label, find_objects
-        solid = (fixed_voxels == 1)
-        labeled, num_features = label(solid, structure=np.array([
-            [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
-            [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
-            [[0, 0, 0], [0, 1, 0], [0, 0, 0]]
-        ]))
-        
-        if num_features > 1:
-            # Find sizes of components
-            component_sizes = np.bincount(labeled.ravel())[1:]
-            largest_component = np.argmax(component_sizes) + 1
-            
-            # If the largest component doesn't include the shell, that's a problem
-            shell_component = labeled[0, 0, 0]
-            if shell_component != largest_component:
-                largest_component = shell_component
-            
-            # Connect smaller components to the largest one
-            for i in range(1, resolution-1):
-                for j in range(1, resolution-1):
-                    for k in range(1, resolution-1):
-                        if labeled[i, j, k] > 0 and labeled[i, j, k] != largest_component:
-                            # Create a path to the largest component
-                            # Find the nearest point in the largest component
-                            min_dist = float('inf')
-                            nearest = None
-                            
-                            for ii in range(resolution):
-                                for jj in range(resolution):
-                                    for kk in range(resolution):
-                                        if labeled[ii, jj, kk] == largest_component:
-                                            dist = abs(i-ii) + abs(j-jj) + abs(k-kk)
-                                            if dist < min_dist:
-                                                min_dist = dist
-                                                nearest = (ii, jj, kk)
-                            
-                            if nearest:
-                                # Create a straight path
-                                xi, yi, zi = i, j, k
-                                xf, yf, zf = nearest
-                                
-                                # X direction
-                                while xi != xf:
-                                    xi += 1 if xf > xi else -1
-                                    if 0 <= xi < resolution:
-                                        fixed_voxels[xi, yi, zi] = True
-                                
-                                # Y direction
-                                while yi != yf:
-                                    yi += 1 if yf > yi else -1
-                                    if 0 <= yi < resolution:
-                                        fixed_voxels[xi, yi, zi] = True
-                                
-                                # Z direction
-                                while zi != zf:
-                                    zi += 1 if zf > zi else -1
-                                    if 0 <= zi < resolution:
-                                        fixed_voxels[xi, yi, zi] = True
-                            
-                            # Only do this for one voxel of the component
-                            break
-    
-    return fixed_voxels
 
 # ===========================================
 # Mesh Generation
@@ -572,21 +576,15 @@ def create_blocky_mesh_from_voxels(voxels, voxel_size=1.0):
     try:
         from trimesh.creation import box
         from trimesh.scene import Scene
-        
         resolution = voxels.shape[0]
         scale_factor = voxel_size / resolution
-        
         scene = Scene()
-        
         filled_voxels = np.argwhere(voxels)
-        
-        print(f"Processing {len(filled_voxels)} filled voxels...")
-        
         if len(filled_voxels) == 0:
             print("Error: No filled voxels found!")
             return np.array([]), np.array([])
             
-        # 创建更简单的方式来生成blocky mesh
+        # generate blocky mesh
         boxes = []
         for idx, (i, j, k) in enumerate(filled_voxels):
             position = np.array([i, j, k]) * scale_factor
@@ -605,120 +603,20 @@ def create_blocky_mesh_from_voxels(voxels, voxel_size=1.0):
             print("Error: Failed to create any boxes!")
             return np.array([]), np.array([])
             
-        # 合并所有立方体网格
+        # merge all the boxes
         try:
             combined_mesh = trimesh.util.concatenate(boxes)
-            print(f"Successfully merged {len(boxes)} boxes into one mesh")
-            
-            # 直接返回trimesh网格的顶点和面
             vertices = np.array(combined_mesh.vertices)
             faces = np.array(combined_mesh.faces)
-            
             print(f"Blocky mesh generated: {len(vertices)} vertices, {len(faces)} faces")
             return vertices, faces
         except Exception as merge_err:
             print(f"Error merging boxes: {merge_err}")
-            # 尝试另一种方式
-            print("Trying alternative method...")
-            all_vertices = []
-            all_faces = []
-            vertex_offset = 0
-            
-            for box_mesh in boxes:
-                v = np.array(box_mesh.vertices)
-                f = np.array(box_mesh.faces) + vertex_offset
-                all_vertices.append(v)
-                all_faces.append(f)
-                vertex_offset += len(v)
-            
-            if all_vertices and all_faces:
-                vertices = np.vstack(all_vertices)
-                faces = np.vstack(all_faces)
-                print(f"Alternative method generated: {len(vertices)} vertices, {len(faces)} faces")
-                return vertices, faces
-            else:
-                print("Alternative method also failed")
-                return np.array([]), np.array([])
-        
     except Exception as e:
         print(f"Error generating blocky mesh: {e}")
         import traceback
         traceback.print_exc()
         return np.array([]), np.array([])
-
-# ===========================================
-# Mesh Validation and Fixing
-# ===========================================
-
-def validate_and_fix_mesh(vertices, faces):
-    """Validate and fix mesh issues"""
-    if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
-        print("Warning: Mesh is empty, skipping validation.")
-        return np.array([]), np.array([])
-
-    print(f"Validating mesh: {len(vertices)} vertices, {faces.shape} faces shape")
-
-    # 检查面的形状
-    if faces.ndim != 2 or faces.shape[1] != 3:
-        print(f"Error: Faces array has wrong shape {faces.shape}. Expected (N, 3).")
-        if faces.ndim == 1 and len(faces) % 3 == 0:
-            try:
-                faces = faces.reshape(-1, 3)
-                print("Reshaped faces array to (N, 3).")
-            except Exception as reshape_err:
-                 print(f"Error reshaping faces: {reshape_err}")
-                 return vertices, np.array([])
-        else:
-            return vertices, np.array([])
-
-    # 检查面的数据类型
-    if not np.issubdtype(faces.dtype, np.integer):
-        print(f"Warning: Faces dtype is {faces.dtype}, attempting to convert to int.")
-        try:
-            faces = faces.astype(np.int32)
-        except Exception as type_err:
-            print(f"Error converting faces dtype: {type_err}")
-            return vertices, np.array([])
-
-    # 检查面的索引是否有效
-    max_index = np.max(faces)
-    min_index = np.min(faces)
-    num_vertices = len(vertices)
-
-    if max_index >= num_vertices or min_index < 0:
-        print(f"Error: Face indices out of bounds (min: {min_index}, max: {max_index}, num_vertices: {num_vertices}). Attempting to remove invalid faces.")
-        valid_face_indices = np.all((faces >= 0) & (faces < num_vertices), axis=1)
-        faces = faces[valid_face_indices]
-        print(f"Removed {np.sum(~valid_face_indices)} invalid faces. Remaining faces: {len(faces)}")
-        if len(faces) == 0:
-            print("Error: No valid faces remaining after index check.")
-            return vertices, np.array([])
-
-    # 尝试使用Open3D修复网格，但如果失败则返回原始网格
-    try:
-        mesh_o3d = o3d.geometry.TriangleMesh()
-        mesh_o3d.vertices = o3d.utility.Vector3dVector(vertices)
-        mesh_o3d.triangles = o3d.utility.Vector3iVector(faces)
-
-        mesh_o3d.remove_duplicated_vertices()
-        mesh_o3d.remove_unreferenced_vertices()
-        mesh_o3d.remove_degenerate_triangles()
-
-        if not mesh_o3d.has_triangles():
-             print("Error: Mesh has no triangles after Open3D cleaning. Returning original mesh instead.")
-             return vertices, faces
-
-        mesh_o3d.orient_triangles()
-
-        final_vertices = np.asarray(mesh_o3d.vertices)
-        final_faces = np.asarray(mesh_o3d.triangles)
-        print(f"Mesh after Open3D validation: {len(final_vertices)} vertices, {len(final_faces)} faces")
-        return final_vertices, final_faces
-
-    except Exception as e:
-        print(f"Error during Open3D validation/fixing: {e}")
-        print("Warning: Returning original mesh.")
-        return vertices, faces
 
 # ===========================================
 # STL Export
@@ -749,24 +647,9 @@ def save_to_stl(vertices, faces, filename="biased_dice_blocky.stl"):
 # ===========================================
 
 def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
-    """
-    Visualize the dice with labeled faces based on standard dice numbering
-    
-    Args:
-        voxels: The voxel representation of the dice
-        probabilities: The probability distribution for each face
-        filename: Output file name for the visualization
-    """
-    # Create a figure and 3D axis
     fig = plt.figure(figsize=(12, 8))
     ax = fig.add_subplot(111, projection='3d')
-    
-    # Get voxel dimensions
     resolution = voxels.shape[0]
-    
-    # Standard dice numbering convention (opposite faces sum to 7)
-    # Direction order: -z, +z, -y, +y, -x, +x
-    # This corresponds to: Bottom, Top, Back, Front, Left, Right
     face_numbers = {
         0: 1,  # Bottom face (-z) = 1
         1: 6,  # Top face (+z) = 6
@@ -775,8 +658,6 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
         4: 2,  # Left face (-x) = 2
         5: 5   # Right face (+x) = 5
     }
-    
-    # Direction vectors for the faces
     directions = [
         (0, 0, -1),  # Bottom (-z)
         (0, 0, 1),   # Top (+z)
@@ -785,8 +666,6 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
         (-1, 0, 0),  # Left (-x)
         (1, 0, 0)    # Right (+x)
     ]
-    
-    # Face positions in 3D space (for text labels)
     face_positions = [
         (resolution/2, resolution/2, 0),             # Bottom
         (resolution/2, resolution/2, resolution),    # Top
@@ -795,26 +674,20 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
         (0, resolution/2, resolution/2),             # Left
         (resolution, resolution/2, resolution/2)     # Right
     ]
-
-    # Plot the voxels
     ax.voxels(voxels, facecolors='lightgray', edgecolors='gray', alpha=0.7)
     
-    # Add text labels for the faces with dice numbers
     for i, (pos, prob) in enumerate(zip(face_positions, probabilities)):
         face_num = face_numbers[i]
         direction = directions[i]
         
-        # Position the text slightly outside the cube 
         text_pos = (
             pos[0] + direction[0] * 2,
             pos[1] + direction[1] * 2,
             pos[2] + direction[2] * 2
         )
         
-        # Calculate the text size based on probability (higher prob = larger text)
         text_size = 10 + 20 * prob
         
-        # Add the face number and probability
         ax.text(
             text_pos[0], text_pos[1], text_pos[2],
             f"{face_num}\n({prob:.3f})",
@@ -823,23 +696,16 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
             verticalalignment='center'
         )
     
-    # 改进的质心计算方法，与calculate_solid_angles保持一致
+    # Calculate the center of mass
     total_mass = np.sum(voxels)
     if total_mass > 0:
-        # 创建坐标网格
         x = y = z = np.linspace(0.5 / resolution, 1 - 0.5 / resolution, resolution)
         X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
-        
-        # 计算质心
         center_of_mass_x = np.sum(X * voxels) / total_mass
         center_of_mass_y = np.sum(Y * voxels) / total_mass
         center_of_mass_z = np.sum(Z * voxels) / total_mass
         center_of_mass = np.array([center_of_mass_x, center_of_mass_y, center_of_mass_z])
-        
-        # 转换为体素坐标系
         center_of_mass = center_of_mass * resolution
-        
-        # 绘制质心
         ax.scatter(center_of_mass[0], center_of_mass[1], center_of_mass[2], 
                   color='red', s=100, label='Center of Mass')
     
@@ -877,12 +743,7 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
     # Add text box with probability information
     plt.figtext(0.02, 0.02, info_text, fontsize=10, 
                 bbox=dict(facecolor='white', alpha=0.7))
-    
-    # Save the figure
-    plt.savefig(filename, dpi=300, bbox_inches='tight')
-    print(f"Visualization saved to {filename}")
-    
-    # Show the figure
+    # draw the figure
     plt.show()
     
     return fig, ax
@@ -920,19 +781,10 @@ def design_biased_dice(target_probabilities, resolution=20, max_iterations=5000)
         alpha=alpha
     )
 
+    print("\nGenerating blocky mesh using Trimesh...")
     vertices, faces = create_blocky_mesh_from_voxels(optimized_voxels, voxel_size=1.0)
 
-    if len(vertices) > 0 and len(faces) > 0:
-        print("\nValidating and fixing generated mesh...")
-        try:
-            fixed_vertices, fixed_faces = validate_and_fix_mesh(vertices, faces)
-            if len(fixed_vertices) > 0 and len(fixed_faces) > 0:
-                vertices, faces = fixed_vertices, fixed_faces
-            else:
-                print("Validation removed all faces, using original mesh instead")
-        except Exception as val_err:
-            print(f"Error during validation: {val_err}, using original mesh")
-    else:
+    if len(vertices) == 0 or len(faces) == 0:
         print("Warning: Mesh generation failed, returning empty mesh.")
         vertices, faces = np.array([]), np.array([])
 
@@ -969,7 +821,7 @@ if __name__ == "__main__":
         print("\nSelect probability distribution:")
         print("1. Uniform [1/6, 1/6, 1/6, 1/6, 1/6, 1/6]")
         print("2. High six [0.01, 0.01, 0.01, 0.01, 0.01, 0.95]")
-        print("3. High five and six [0.1, 0.1, 0.1, 0.1, 0.3, 0.3]")
+        print("3. High five and six [0, 0.5, 0, 0, 0, 0.5]")
         print("4. Linear increase [0.05, 0.1, 0.15, 0.2, 0.25, 0.25]")
         print("5. Custom probabilities")
         
