@@ -308,6 +308,7 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
         print(f"Selected initial pattern {best_pattern_idx+1} with score {pattern_scores[0][0]:.6f}")
         voxels = patterns[best_pattern_idx].copy()
         current_score = pattern_scores[0][0]
+    
     best_voxels = voxels.copy()
     best_score = current_score
     
@@ -823,23 +824,10 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
             verticalalignment='center'
         )
     
-    # 改进的质心计算方法，与calculate_solid_angles保持一致
-    total_mass = np.sum(voxels)
-    if total_mass > 0:
-        # 创建坐标网格
-        x = y = z = np.linspace(0.5 / resolution, 1 - 0.5 / resolution, resolution)
-        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
-        
-        # 计算质心
-        center_of_mass_x = np.sum(X * voxels) / total_mass
-        center_of_mass_y = np.sum(Y * voxels) / total_mass
-        center_of_mass_z = np.sum(Z * voxels) / total_mass
-        center_of_mass = np.array([center_of_mass_x, center_of_mass_y, center_of_mass_z])
-        
-        # 转换为体素坐标系
-        center_of_mass = center_of_mass * resolution
-        
-        # 绘制质心
+    # Highlight the center of mass
+    filled_positions = np.argwhere(voxels > 0)
+    if len(filled_positions) > 0:
+        center_of_mass = filled_positions.mean(axis=0)
         ax.scatter(center_of_mass[0], center_of_mass[1], center_of_mass[2], 
                   color='red', s=100, label='Center of Mass')
     
@@ -849,7 +837,7 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
               color='blue', s=100, label='Geometric Center')
     
     # Draw a line between centers to visualize bias
-    if total_mass > 0:
+    if len(filled_positions) > 0:
         ax.plot([center_of_mass[0], geo_center[0]], 
                 [center_of_mass[1], geo_center[1]], 
                 [center_of_mass[2], geo_center[2]], 
@@ -858,7 +846,11 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
     # Add title and legend
     ax.set_title('Biased Dice Visualization', fontsize=16)
     ax.legend()
+    
+    # Set equal aspect ratio
     ax.set_box_aspect([1,1,1])
+    
+    # Add axes labels
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
@@ -869,7 +861,7 @@ def visualize_dice(voxels, probabilities, filename="dice_visualization.png"):
         info_text += f"Face {face_numbers[i]}: {prob:.3f}\n"
     
     # Calculate bias magnitude
-    if total_mass > 0:
+    if len(filled_positions) > 0:
         bias_vector = center_of_mass - geo_center
         bias_magnitude = np.linalg.norm(bias_vector)
         info_text += f"\nBias Magnitude: {bias_magnitude:.3f}"
@@ -920,6 +912,8 @@ def design_biased_dice(target_probabilities, resolution=20, max_iterations=5000)
         alpha=alpha
     )
 
+    # Always generate blocky mesh
+    print("\nGenerating blocky mesh using Trimesh...")
     vertices, faces = create_blocky_mesh_from_voxels(optimized_voxels, voxel_size=1.0)
 
     if len(vertices) > 0 and len(faces) > 0:
@@ -946,6 +940,9 @@ def design_biased_dice(target_probabilities, resolution=20, max_iterations=5000)
         final_probabilities = np.ones(6) / 6 # Fallback if no solid angle
         print("Warning: Total solid angle is near zero, using uniform probability.")
 
+    # 添加max_prob_idx的定义
+    max_prob_idx = np.argmax(final_probabilities)
+
     final_error = np.mean((final_probabilities - target_probabilities)**2)
 
     print("\n--- Results ---")
@@ -954,6 +951,10 @@ def design_biased_dice(target_probabilities, resolution=20, max_iterations=5000)
     print(f"Mean Squared Error: {final_error:.6f}")
     print(f"Generated Mesh: {len(vertices)} vertices, {len(faces)} faces")
     print("---------------")
+
+    # 在现有代码的最后，添加以下可视化调用
+    print("\nGenerating visualization...")
+    visualize_dice(optimized_voxels, final_probabilities, filename=f"biased_dice_viz_{max_prob_idx+1}.png")
 
     return vertices, faces, optimized_voxels, final_probabilities
 
