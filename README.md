@@ -1,24 +1,29 @@
-# 偏向骰子设计工具
+# Biased Dice Design Tool
 
-这个项目提供了一个用于设计偏向骰子的工具，可以通过优化体素模型来创建一个特定面点数概率更高的骰子。
+A tool for designing biased dice with customizable probability distributions through voxel model optimization.
 
-## 项目结构
+## Project Structure
 
 ```
 src/
-  ├── biased_dice.py   - 核心优化算法和体素建模
-  ├── visualization.py - 可视化功能
-  └── main.py          - 交互式设计工具入口点
+├── main.py - Main entry point and user interface
+├── optimization.py - Simulated annealing algorithm and voxel optimization
+├── probability_models.py - Probability calculation based on solid angles based on Centroid Solid Angle Model
+├── mesh_generation.py - 3D mesh generation from voxel models
+├── connectivity.py - Connectivity validation for dice structure
+└── visualization.py - Visualization and STL export
 ```
 
-## 功能
+## Features
 
-- 基于模拟退火算法的体素模型优化
-- 可调整外壁厚度以确保结构连通性
-- 可视化体素模型、优化历史和概率分布
-- 导出STL格式用于3D打印
+- Voxel model optimization with simulated annealing
+- Multiple initialization patterns for different bias profiles
+- Connectivity validation to ensure structural integrity
+- Probability calculation using solid angle method
+- 3D visualization of dice with probability distribution
+- STL export for 3D printing
 
-## 依赖项
+## Dependencies
 
 ```
 numpy
@@ -26,56 +31,39 @@ scipy
 meshio
 open3d
 scikit-image
-igl
 matplotlib
 ```
 
-## 使用方法
+## Usage
 
-### 可视化界面
+Run the main interface:
 
 ```bash
 python -m src.main
 ```
 
-交互式设计界面将引导您设置目标面、分辨率和其他参数。
+The interactive design interface will guide you to:
+1. Select a target probability distribution
+2. Set voxel resolution and iteration count
+3. Generate and visualize the biased dice
+4. Export STL files for 3D printing
 
-### 或者在Python中使用
+## Algorithm
 
-```python
-from src.biased_dice import design_max_biased_dice, save_to_stl
+The tool creates biased dice through:
 
-# 设计一个点数6概率最高的骰子
-vertices, faces, voxels, probs, _, _ = design_max_biased_dice(
-    target_face_index=5,  # 0-5对应1-6点
-    resolution=20,        # 体素分辨率
-    max_iterations=5000,  # 优化迭代次数
-    wall_thickness=2      # 外壁厚度
-)
+1. Starting with a solid cube and iteratively removing internal voxels
+2. Optimizing voxel distribution via simulated annealing
+3. Maintaining outer shell integrity and internal connectivity
+4. Calculating face probabilities using solid angle method
+5. Generating a 3D mesh for visualization and printing
 
-# 保存为STL文件用于3D打印
-save_to_stl(vertices, faces, "biased_dice.stl")
-```
+graph TD
+    A[main.py] --> B[visualization.py]
+    A --> C[probability_models.py]
+    A --> D[mesh_generation.py]
+    A --> E[optimization.py]
+    E --> F[connectivity.py]
+    E --> C
+    F --> G[is_connected/is_solid_connected]
 
-## 算法原理
-
-该工具使用以下技术创建偏向骰子：
-
-1. 从实心立方体开始，迭代移除内部体素
-2. 使用模拟退火算法优化体素分布
-3. 保持外壁厚度固定，确保内部与外壳连通
-4. 计算重心相对于各个面的立体角来估计概率
-5. 最后使用Marching Cubes算法生成3D网格
-
-## 注意事项
-
-- 高分辨率将提供更精确的结果，但会增加计算时间
-- 外壁厚度影响骰子的物理结构和偏向程度
-- 生成的STL文件可以直接用于3D打印
-
-## 许可
-
-MIT
-
----
-来自 Perplexity 的回答: pplx.ai/share

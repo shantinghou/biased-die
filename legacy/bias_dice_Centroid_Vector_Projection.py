@@ -7,7 +7,7 @@ import trimesh
 # ============================
 
 def is_cube_shell_intact(voxel_cube: np.ndarray) -> bool:
-    """检查立方体的外壳是否完整"""
+    """check if the shell of the cube is intact"""
     return (
         np.all(voxel_cube[ 0, :, :] == 1) and
         np.all(voxel_cube[-1, :, :] == 1) and
@@ -18,24 +18,24 @@ def is_cube_shell_intact(voxel_cube: np.ndarray) -> bool:
     )
 
 def voxel_to_face_probabilities(voxel_cube: np.ndarray) -> dict:
-    """计算立方体各面的倾倒概率分布"""
-    # 获取所有实心体素的坐标
+    """calculate the probability distribution of the faces of the cube"""
+    # get the coordinates of all solid voxels
     voxel_positions = np.argwhere(voxel_cube > 0)
     
-    # 如果没有体素，返回均匀分布
+    # if there are no voxels, return the uniform distribution
     if len(voxel_positions) == 0:
         return {face: 1/6 for face in ['px', 'nx', 'py', 'ny', 'pz', 'nz']}
     
-    # 计算重心（所有实心体素的平均位置）
+    # calculate the centroid (the average position of all solid voxels)
     centroid = voxel_positions.mean(axis=0)
     
-    # 立方体几何中心
+    # the geometric center of the cube
     center = (np.array(voxel_cube.shape) - 1) / 2.0
     
-    # 从重心到中心的向量（注意方向，是重心到中心，不是中心到重心）
+    # the vector from the centroid to the center (note the direction, it is from the centroid to the center, not the center to the centroid)
     r = centroid - center
     
-    # 定义六个面的法向量（朝外）
+    # define the normal vectors of the six faces (outward)
     face_normals = {
         'px': np.array([ 1,  0,  0]),
         'nx': np.array([-1,  0,  0]),
@@ -45,54 +45,54 @@ def voxel_to_face_probabilities(voxel_cube: np.ndarray) -> dict:
         'nz': np.array([ 0,  0, -1])
     }
     
-    # 计算重心偏移在各个方向的投影（点积）
+    # calculate the projection of the centroid offset on each direction (dot product)
     raw_scores = {face: np.dot(r, normal) for face, normal in face_normals.items()}
     
-    # 使用softmax函数将原始分数转换为概率分布
-    # 这比简单地截断负值并归一化更合理
+    # use the softmax function to convert the raw scores to a probability distribution
+    # this is more reasonable than simply truncating negative values and normalizing
     scores_list = list(raw_scores.values())
     max_score = max(scores_list)
-    exp_scores = [np.exp(s - max_score) for s in scores_list]  # 减去最大值以避免数值溢出
+    exp_scores = [np.exp(s - max_score) for s in scores_list]  # subtract the maximum value to avoid numerical overflow
     total = sum(exp_scores)
     
-    # 返回概率字典
+    # return the probability dictionary
     return {face: score/total for face, score in zip(raw_scores.keys(), exp_scores)}
 
 def face_bias_score(prob_mapping: dict, target_face: str) -> float:
-    """计算目标面的偏向分数"""
+    """calculate the score of the target face"""
     return prob_mapping.get(target_face, 0)
 
 def is_connected(voxel_cube: np.ndarray) -> bool:
-    """检查空洞（值为0的体素）是否连通"""
+    """check if the empty space (voxels with value 0) is connected"""
     from scipy.ndimage import label
     structure = np.ones((3, 3, 3), dtype=int)
-    # 创建一个掩码，表示空洞
+    # create a mask, representing the empty space
     empty_space = (voxel_cube == 0)
-    # 如果没有空洞，则认为是连通的
+    # if there is no empty space, then it is connected
     if not np.any(empty_space):
         return True
-    # 标记连接的组件
+    # label the connected components
     labeled, num_features = label(empty_space, structure=structure)
     return num_features == 1
 
 def evaluate_voxel_bias(voxel_cube: np.ndarray, target_face: str) -> float:
-    """评估体素立方体的偏向性分数"""
-    # 检查约束条件
+    """evaluate the bias score of the voxel cube"""
+    # check the constraint conditions
     if not is_cube_shell_intact(voxel_cube):
         return -np.inf
     if not is_connected(voxel_cube):
         return -np.inf
     
-    # 计算各面的概率分布
+    # calculate the probability distribution of the faces
     probs = voxel_to_face_probabilities(voxel_cube)
     
-    # 返回目标面的概率作为分数
+    # return the probability of the target face as the score
     score = face_bias_score(probs, target_face)
     
-    # 添加额外的评估指标：其他面的概率分布越低越好
-    # 这促使算法寻找更稳定的解决方案
+    # add additional evaluation metrics: the lower the probability distribution of the other faces, the better
+    # this encourages the algorithm to find a more stable solution
     entropy = -sum(p * np.log(p) if p > 0 else 0 for p in probs.values())
-    # 我们希望熵更低（分布更集中），但仍以目标面概率为主要指标
+    # we want the entropy to be lower (the distribution to be more concentrated), but still prioritize the target face probability
     combined_score = score - 0.1 * entropy
     
     return combined_score
@@ -102,7 +102,7 @@ def evaluate_voxel_bias(voxel_cube: np.ndarray, target_face: str) -> float:
 # ============================
 
 def print_face_probabilities(voxel_cube):
-    """输出面概率分布，用于调试"""
+    """print the probability distribution of the faces, for debugging"""
     probs = voxel_to_face_probabilities(voxel_cube)
     print("Face probabilities:")
     for face, prob in probs.items():
@@ -113,11 +113,11 @@ def print_face_probabilities(voxel_cube):
 # ============================
 
 def optimize_voxel_cube(size=5, target_face='nz', steps=5000, temperature=5.0, cooling=0.999):
-    """优化体素立方体使其偏向于目标面"""
-    # 初始化一个实心立方体
+    """optimize the voxel cube to be biased toward the target face"""
+    # initialize a solid cube
     cube = np.ones((size, size, size), dtype=int)
     
-    # 获取所有内部体素的索引（不包括外壳）
+    # get the indices of all inner voxels (not including the shell)
     inner_indices = [
         (i, j, k)
         for i in range(1, size - 1)
@@ -125,34 +125,34 @@ def optimize_voxel_cube(size=5, target_face='nz', steps=5000, temperature=5.0, c
         for k in range(1, size - 1)
     ]
     
-    # 初始设置：保留底部体素，移除顶部体素（使重心偏向底部）
+    # initial setup: keep the bottom voxels, remove the top voxels (to make the centroid biased toward the bottom)
     for i, j, k in inner_indices:
         # 根据目标面选择初始化策略
         if target_face == 'nz':
-            # 如果目标是底面朝下，则保留底部体素
+            # if the target face is the bottom face, then keep the bottom voxels
             cube[i, j, k] = 1 if k < size // 2 else 0
         elif target_face == 'pz':
-            # 如果目标是顶面朝上，则保留顶部体素
+            # if the target face is the top face, then keep the top voxels
             cube[i, j, k] = 1 if k >= size // 2 else 0
         elif target_face == 'nx':
-            # 如果目标是左面朝左，则保留左侧体素
+            # if the target face is the left face, then keep the left voxels
             cube[i, j, k] = 1 if i < size // 2 else 0
         elif target_face == 'px':
-            # 如果目标是右面朝右，则保留右侧体素
+            # if the target face is the right face, then keep the right voxels
             cube[i, j, k] = 1 if i >= size // 2 else 0
         elif target_face == 'ny':
-            # 如果目标是前面朝前，则保留前侧体素
+            # if the target face is the front face, then keep the front voxels
             cube[i, j, k] = 1 if j < size // 2 else 0
         elif target_face == 'py':
-            # 如果目标是后面朝后，则保留后侧体素
+            # if the target face is the back face, then keep the back voxels
             cube[i, j, k] = 1 if j >= size // 2 else 0
     
-    # 确保初始状态空洞是连通的
+    # ensure the initial state of the empty space is connected
     retries = 0
     max_retries = 100
     
     while not is_connected(cube) and retries < max_retries:
-        # 随机移除一个体素以尝试使空洞连通
+        # randomly remove a voxel to try to make the empty space connected
         filled_inner = [(i, j, k) for i, j, k in inner_indices if cube[i, j, k] == 1]
         if not filled_inner:
             break
@@ -160,62 +160,62 @@ def optimize_voxel_cube(size=5, target_face='nz', steps=5000, temperature=5.0, c
         cube[i, j, k] = 0
         retries += 1
     
-    # 如果仍然不连通，使用更简单的初始化策略
+    # if the empty space is still not connected, use a simpler initialization strategy
     if not is_connected(cube):
         print("Warning: Could not create connected initial state with directional bias.")
-        # 重新初始化为实心立方体
+        # reinitialize to a solid cube
         cube = np.ones((size, size, size), dtype=int)
-        # 移除中心体素以创建简单的空腔
+        # remove the center voxel to create a simple cavity
         mid = size // 2
         cube[mid, mid, mid] = 0
     
-    # 评估初始状态
+    # evaluate the initial state
     current_score = evaluate_voxel_bias(cube, target_face)
     best_cube = cube.copy()
     best_score = current_score
     
-    # 输出初始面概率
+    # print the initial state
     print("\nInitial state:")
     print_face_probabilities(cube)
     print(f"Initial score: {current_score:.4f}")
     
-    # 记录优化历程
+    # record the optimization history
     score_history = []
     
-    # 开始优化
+    # start optimization
     for step in range(steps):
-        # 随机选择一个内部体素
+        # randomly select an inner voxel
         i, j, k = random.choice(inner_indices)
         original_value = cube[i, j, k]
         
-        # 尝试反转这个体素的状态
+        # try to reverse the state of this voxel
         cube[i, j, k] = 1 - original_value
         
-        # 检查修改后是否仍然有效（壳完整且空洞连通）
+        # check if the modified state is still valid (shell intact and empty space connected)
         valid_state = is_cube_shell_intact(cube) and is_connected(cube)
         
         if valid_state:
-            # 计算新的分数
+            # calculate the new score
             new_score = evaluate_voxel_bias(cube, target_face)
             delta = new_score - current_score
             
-            # 按照模拟退火算法决定是否接受这一修改
+            # according to the simulated annealing algorithm, decide whether to accept this modification
             if delta > 0 or (temperature > 1e-8 and np.exp(delta / temperature) > np.random.rand()):
                 current_score = new_score
                 if new_score > best_score:
                     best_cube = cube.copy()
                     best_score = new_score
             else:
-                # 如果不接受，恢复原状态
+                # if not accepted, restore the original state
                 cube[i, j, k] = original_value
         else:
-            # 如果修改导致无效状态，恢复原状态
+            # if the modification leads to an invalid state, restore the original state
             cube[i, j, k] = original_value
         
-        # 降低温度
+        # reduce the temperature
         temperature *= cooling
         
-        # 每隔一定步数输出状态
+        # print the state every 100 steps
         if step % 100 == 0:
             print(f"Step {step}, Temp {temperature:.4f}, Current Score: {current_score:.4f}, Best Score: {best_score:.4f}")
             score_history.append(best_score)
