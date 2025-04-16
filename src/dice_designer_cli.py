@@ -1,15 +1,23 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+biased dice designer - command line interface
+
+This module contains the CLI implementation of the biased dice designer, providing a command line interface for designing, optimizing, and exporting dice models with a biased probability distribution.
+"""
+
 import numpy as np
 
 # Import
 try:
     # When running from project root
-    from src.visualization import visualize_dice, save_to_stl
+    from src.visualizer import visualize_dice, save_to_stl
     from src.probability_models import calculate_solid_angles
     from src.mesh_generation import create_blocky_mesh_from_voxels
     from src.optimization import optimize_biased_dice
 except ImportError:
     # When running from src directory
-    from visualization import visualize_dice, save_to_stl
+    from visualizer import visualize_dice, save_to_stl
     from probability_models import calculate_solid_angles
     from mesh_generation import create_blocky_mesh_from_voxels
     from optimization import optimize_biased_dice
@@ -18,7 +26,7 @@ except ImportError:
 # Main Function
 # ===========================================
 
-def design_biased_dice(target_probabilities, resolution=20, max_iterations=5000):
+def design_biased_dice(target_probabilities, resolution=20, max_iterations=15000, output_filename='biased_dice', progress_callback=None):
     """Main function to execute optimization, mesh generation, validation and return results"""
     if not isinstance(target_probabilities, np.ndarray):
         target_probabilities = np.array(target_probabilities)
@@ -38,14 +46,19 @@ def design_biased_dice(target_probabilities, resolution=20, max_iterations=5000)
     print("Using blocky mesh representation")
 
     print("Starting voxel optimization...")
-    optimized_voxels = optimize_biased_dice(
-        target_probabilities, 
-        resolution=resolution, 
-        max_iterations=max_iterations,
-        T_initial=T_initial,
-        T_min=T_min,
-        alpha=alpha
-    )
+    try:
+        optimized_voxels = optimize_biased_dice(
+            target_probabilities, 
+            resolution=resolution, 
+            max_iterations=max_iterations,
+            T_initial=T_initial,
+            T_min=T_min,
+            alpha=alpha,
+            progress_callback=progress_callback
+        )
+    except Exception as e:
+        print(f"Error during optimization: {e}")
+        return None, None
 
     print("\nGenerating blocky mesh using Trimesh...")
     vertices, faces = create_blocky_mesh_from_voxels(optimized_voxels, voxel_size=1.0)

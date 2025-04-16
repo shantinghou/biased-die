@@ -58,7 +58,7 @@ def evaluate_solution(voxels, target_probabilities):
 # Voxel Optimization
 # ===========================================
 
-def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=15000, T_initial=0.05, T_min=1e-7, alpha=0.997):
+def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=15000, T_initial=0.05, T_min=1e-7, alpha=0.997, progress_callback=None):
     """Optimize voxel shape using simulated annealing"""
     voxels = np.ones((resolution, resolution, resolution), dtype=bool)
     outer_layer_mask = create_outer_layer_mask(resolution)
@@ -227,6 +227,18 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
             print("Temperature below minimum threshold. Stopping.")
             break
 
+        # Report progress if callback provided
+        if progress_callback is not None and iteration % 20 == 0:
+            progress_percent = min(100, int((iteration / max_iterations) * 100))
+            try:
+                progress_callback(progress_percent / 100, current_score, voxels.copy())
+            except TypeError:
+                # 如果回调函数不接受全部参数，则只传递进度值
+                try:
+                    progress_callback(progress_percent / 100)
+                except Exception as e:
+                    print(f"Warning: Progress callback error: {e}")
+            
         # Change annealing strategy between phases
         if iteration == phase1_iterations:
             print(f"Switching to fine-tuning phase at iteration {iteration}")
