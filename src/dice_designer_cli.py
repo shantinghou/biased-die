@@ -26,7 +26,7 @@ except ImportError:
 # Main Function
 # ===========================================
 
-def design_biased_dice(target_probabilities, resolution=20, max_iterations=15000, output_filename='biased_dice', progress_callback=None):
+def design_biased_dice(target_probabilities, resolution=20, max_iterations=15000, wall_thickness=1, output_filename='biased_dice', progress_callback=None):
     """Main function to execute optimization, mesh generation, validation and return results"""
     if not isinstance(target_probabilities, np.ndarray):
         target_probabilities = np.array(target_probabilities)
@@ -37,12 +37,18 @@ def design_biased_dice(target_probabilities, resolution=20, max_iterations=15000
          print(f"Warning: Target probabilities sum to {np.sum(target_probabilities)}, normalizing.")
          target_probabilities = target_probabilities / np.sum(target_probabilities)
     
+    # Validate wall thickness
+    max_wall_thickness = (resolution - 2) // 2
+    if wall_thickness > max_wall_thickness:
+        raise ValueError(f"Wall thickness ({wall_thickness}) is too large for resolution ({resolution}). Maximum allowed is {max_wall_thickness}.")
+    
     # optimize parameters
     T_initial = 0.01
     T_min = 1e-6
     alpha = 0.995
     
     print(f"Optimization parameters: T_initial={T_initial}, T_min={T_min}, alpha={alpha}")
+    print(f"Wall thickness: {wall_thickness} voxels")
     print("Using blocky mesh representation")
 
     print("Starting voxel optimization...")
@@ -51,6 +57,7 @@ def design_biased_dice(target_probabilities, resolution=20, max_iterations=15000
             target_probabilities, 
             resolution=resolution, 
             max_iterations=max_iterations,
+            wall_thickness=wall_thickness,
             T_initial=T_initial,
             T_min=T_min,
             alpha=alpha,
@@ -84,6 +91,7 @@ def design_biased_dice(target_probabilities, resolution=20, max_iterations=15000
     print(f"Achieved Probabilities: {np.round(final_probabilities, 4)}")
     print(f"Mean Squared Error: {final_error:.6f}")
     print(f"Generated Mesh: {len(vertices)} vertices, {len(faces)} faces")
+    print(f"Wall Thickness: {wall_thickness} voxels")
     print("---------------")
 
     return vertices, faces, optimized_voxels, final_probabilities
@@ -150,6 +158,19 @@ if __name__ == "__main__":
             
         print(f"Using voxel resolution: {voxel_resolution}x{voxel_resolution}x{voxel_resolution}")
         
+        # Set wall thickness
+        max_wall_thickness = (voxel_resolution - 2) // 2
+        try:
+            wall_thickness = int(input(f"\nWall thickness in voxels (1-{max_wall_thickness}, recommended 1): ") or "1")
+            if wall_thickness < 1 or wall_thickness > max_wall_thickness:
+                print(f"Wall thickness out of range, using default 1")
+                wall_thickness = 1
+        except:
+            print("Invalid input, using default 1")
+            wall_thickness = 1
+            
+        print(f"Using wall thickness: {wall_thickness} voxels")
+        
         # Set iteration count
         try:
             max_iter = int(input("\nMaximum iterations (1000-10000, recommended 5000): ") or "5000")
@@ -179,6 +200,7 @@ if __name__ == "__main__":
         final_vertices, final_faces, final_voxels, achieved_probs = design_biased_dice(
             target_probs,
             resolution=voxel_resolution,
+            wall_thickness=wall_thickness,
             max_iterations=max_iter
         )
 

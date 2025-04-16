@@ -56,6 +56,7 @@ class OptimizationWorker(QThread):
             vertices, faces, voxels, final_probs = design_biased_dice(
                 self.params['target_probabilities'],
                 resolution=self.params['resolution'],
+                wall_thickness=self.params['wall_thickness'],
                 max_iterations=self.params['max_iterations'],
                 progress_callback=progress_callback
             )
@@ -67,7 +68,8 @@ class OptimizationWorker(QThread):
                 'voxels': voxels,
                 'probabilities': final_probs,
                 'output_dir': self.params['output_dir'],
-                'output_stem': self.params['output_stem']
+                'output_stem': self.params['output_stem'],
+                'wall_thickness': self.params['wall_thickness']  # Add this to result for reference
             }
             
             # send the completed signal with the result
@@ -99,6 +101,7 @@ class DiceVisualizationApp(QMainWindow):
         self.probabilities = np.ones(6) / 6  # default uniform distribution
         self.optimization_running = False
         self.show_walls = True  # New variable to control wall visibility
+        self.result_probabilities = None  # Store optimization results
         
         # create UI components
         self.setup_ui()
@@ -149,7 +152,7 @@ class DiceVisualizationApp(QMainWindow):
         
         # Recipe selection for predefined probability distributions
         recipe_group = QGroupBox("predefined probability recipes")
-        recipe_layout = QVBoxLayout(recipe_group)
+        recipe_layout = QHBoxLayout(recipe_group)
         
         # Create recipe buttons
         uniform_btn = QPushButton("Uniform")
@@ -159,8 +162,8 @@ class DiceVisualizationApp(QMainWindow):
         
         # Connect button signals
         uniform_btn.clicked.connect(lambda: self.apply_recipe([1/6, 1/6, 1/6, 1/6, 1/6, 1/6]))
-        high_six_btn.clicked.connect(lambda: self.apply_recipe([0.01, 0.01, 0.01, 0.01, 0.01, 0.95]))
-        high_five_six_btn.clicked.connect(lambda: self.apply_recipe([0, 0, 0, 0, 0.5, 0.5]))
+        high_six_btn.clicked.connect(lambda: self.apply_recipe([0, 1, 0, 0, 0, 0]))
+        high_five_six_btn.clicked.connect(lambda: self.apply_recipe([0, 0.5, 0, 0, 0, 0.5]))
         linear_btn.clicked.connect(lambda: self.apply_recipe([0.05, 0.1, 0.15, 0.2, 0.25, 0.25]))
         
         # Add buttons to layout
@@ -179,6 +182,12 @@ class DiceVisualizationApp(QMainWindow):
         self.prob_inputs = {}
         self.sliders = []
         self.prob_labels = []
+        
+        # Add header labels
+        prob_layout.addWidget(QLabel("Face"), 0, 0)
+        prob_layout.addWidget(QLabel("Target Value"), 0, 1)
+        prob_layout.addWidget(QLabel("Target Slider"), 0, 2)
+        prob_layout.addWidget(QLabel("Target Display"), 0, 3)
         
         face_names = ["bottom (1)", "top (6)", "back (3)", "front (4)", "left (2)", "right (5)"]
         
@@ -207,17 +216,47 @@ class DiceVisualizationApp(QMainWindow):
             self.prob_labels.append(prob_label)
             
             # add to layout
-            prob_layout.addWidget(label, i, 0)
-            prob_layout.addWidget(prob_input, i, 1)
-            prob_layout.addWidget(slider, i, 2)
-            prob_layout.addWidget(prob_label, i, 3)
+            prob_layout.addWidget(label, i+1, 0)
+            prob_layout.addWidget(prob_input, i+1, 1)
+            prob_layout.addWidget(slider, i+1, 2)
+            prob_layout.addWidget(prob_label, i+1, 3)
         
         # add normalize button
         normalize_btn = QPushButton("normalize probabilities")
         normalize_btn.clicked.connect(self.normalize_probabilities)
-        prob_layout.addWidget(normalize_btn, len(face_names), 0, 1, 4)
+        prob_layout.addWidget(normalize_btn, len(face_names)+1, 0, 1, 4)
         
         param_layout.addWidget(prob_group)
+        
+        # Create result display section
+        result_group = QGroupBox("optimization results")
+        result_layout = QGridLayout(result_group)
+        
+        # Add header
+        result_layout.addWidget(QLabel("Face"), 0, 0)
+        result_layout.addWidget(QLabel("Achieved Probability"), 0, 1)
+        
+        # Create result labels
+        self.result_labels = []
+        for i, name in enumerate(face_names):
+            face_label = QLabel(name)
+            result_label = QLabel("--")
+            result_label.setStyleSheet("font-weight: bold; color: #0066cc;")
+            
+            result_layout.addWidget(face_label, i+1, 0)
+            result_layout.addWidget(result_label, i+1, 1)
+            self.result_labels.append(result_label)
+        
+        # Add error display
+        error_layout = QHBoxLayout()
+        error_layout.addWidget(QLabel("Mean Squared Error:"))
+        self.mse_label = QLabel("--")
+        self.mse_label.setStyleSheet("font-weight: bold;")
+        error_layout.addWidget(self.mse_label)
+        error_layout.addStretch()
+        
+        result_layout.addLayout(error_layout, len(face_names)+1, 0, 1, 2)
+        param_layout.addWidget(result_group)
         
         # optimization parameter setting
         optim_group = QGroupBox("optimization parameters")
@@ -226,7 +265,21 @@ class DiceVisualizationApp(QMainWindow):
         self.resolution_input = QSpinBox()
         self.resolution_input.setRange(10, 100)
         self.resolution_input.setValue(20)
+        self.resolution_input.valueChanged.connect(self.validate_wall_thickness)
         optim_layout.addRow("voxel resolution:", self.resolution_input)
+        
+        # Add wall thickness control
+        self.wall_thickness_input = QSpinBox()
+        self.wall_thickness_input.setRange(1, 10)
+        self.wall_thickness_input.setValue(1)
+        self.wall_thickness_input.setToolTip("Thickness of the dice wall in voxels")
+        self.wall_thickness_input.valueChanged.connect(self.validate_wall_thickness)
+        optim_layout.addRow("wall thickness:", self.wall_thickness_input)
+        
+        # Add a validation message label
+        self.wall_validation_label = QLabel("")
+        self.wall_validation_label.setStyleSheet("color: red;")
+        optim_layout.addRow("", self.wall_validation_label)
         
         self.max_iter_input = QSpinBox()
         self.max_iter_input.setRange(100, 20000)
@@ -279,7 +332,8 @@ class DiceVisualizationApp(QMainWindow):
         viz_layout = QVBoxLayout(viz_group)
         
         # Toggle walls button
-        self.toggle_walls_btn = QPushButton("Hide Dice Walls")
+        self.toggle_walls_btn = QPushButton("Hide Outer Walls")
+        self.toggle_walls_btn.setToolTip("Toggle the visibility of the outer walls to see internal structure")
         self.toggle_walls_btn.clicked.connect(self.toggle_walls)
         viz_layout.addWidget(self.toggle_walls_btn)
         
@@ -425,8 +479,37 @@ class DiceVisualizationApp(QMainWindow):
         if dir_path:
             self.output_dir_input.setText(dir_path)
     
+    def validate_wall_thickness(self):
+        """Validate wall thickness against resolution to ensure it's feasible"""
+        resolution = self.resolution_input.value()
+        wall_thickness = self.wall_thickness_input.value()
+        
+        # Check if the wall thickness is feasible
+        max_thickness = (resolution - 2) // 2
+        
+        if wall_thickness > max_thickness:
+            self.wall_validation_label.setText(f"Wall too thick for resolution! Max: {max_thickness}")
+            self.start_btn.setEnabled(False)
+        else:
+            self.wall_validation_label.setText("")
+            self.start_btn.setEnabled(True)
+    
     def start_optimization(self):
         """start the optimization process"""
+        # Check wall thickness again
+        resolution = self.resolution_input.value()
+        wall_thickness = self.wall_thickness_input.value()
+        max_thickness = (resolution - 2) // 2
+        
+        if wall_thickness > max_thickness:
+            QMessageBox.warning(
+                self, 
+                "Invalid wall thickness",
+                f"Wall thickness ({wall_thickness}) is too large for the selected resolution ({resolution}).\n"
+                f"Maximum allowed thickness is {max_thickness} voxels."
+            )
+            return
+            
         # check and create the output directory
         output_dir = self.output_dir_input.text()
         if not os.path.exists(output_dir):
@@ -446,6 +529,7 @@ class DiceVisualizationApp(QMainWindow):
         params = {
             'target_probabilities': target_probs,
             'resolution': self.resolution_input.value(),
+            'wall_thickness': self.wall_thickness_input.value(),
             'max_iterations': self.max_iter_input.value(),
             'output_dir': output_dir,
             'output_stem': self.output_stem_input.text()
@@ -485,43 +569,39 @@ class DiceVisualizationApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.optimization_running = False
         
-        # show the result
+        # Get the result data
         vertices = result.get('vertices')
         faces = result.get('faces')
         self.voxel_model = result.get('voxels')
-        self.probabilities = result.get('probabilities')
+        self.result_probabilities = result.get('probabilities')
         output_dir = result.get('output_dir')
         output_stem = result.get('output_stem')
         
-        # save the STL file
+        # Save the STL file
         if vertices is not None and faces is not None and len(vertices) > 0 and len(faces) > 0:
             stl_path = os.path.join(output_dir, f"{output_stem}.stl")
             save_to_stl(vertices, faces, filename=stl_path)
         
-        # load the optimization result to the interface controls
-        for i, prob in enumerate(self.probabilities):
-            # update the numeric input box
-            self.prob_inputs[i+1].blockSignals(True)
-            self.prob_inputs[i+1].setValue(prob)
-            self.prob_inputs[i+1].blockSignals(False)
-            
-            # update the slider
-            self.sliders[i].blockSignals(True)
-            self.sliders[i].setValue(int(prob * 100))
-            self.sliders[i].blockSignals(False)
-            
-            # update the label
-            self.prob_labels[i].setText(f"{prob:.3f}")
+        # Update the result labels instead of input controls
+        for i, prob in enumerate(self.result_probabilities):
+            self.result_labels[i].setText(f"{prob:.4f}")
         
-        # update the visualization
+        # Calculate and display mean squared error
+        target_probs = [self.prob_inputs[i].value() for i in range(1, 7)]
+        total = sum(target_probs)
+        target_probs = [p / total for p in target_probs]
+        mse = np.mean([(a - b)**2 for a, b in zip(target_probs, self.result_probabilities)])
+        self.mse_label.setText(f"{mse:.6f}")
+        
+        # Update the visualization
         self.update_visualization()
         
-        # show the completion message
+        # Show the completion message
         QMessageBox.information(
             self, 
             "optimization completed", 
             f"biased dice optimization completed!\nfinal probability distribution:\n" + 
-            "\n".join([f"face {i+1}: {p:.4f}" for i, p in enumerate(self.probabilities)])
+            "\n".join([f"face {i+1}: {p:.4f}" for i, p in enumerate(self.result_probabilities)])
         )
 
     def handle_error(self, error_msg):
@@ -566,16 +646,23 @@ class DiceVisualizationApp(QMainWindow):
         self.show_walls = not self.show_walls
         
         if self.show_walls:
-            self.toggle_walls_btn.setText("Hide Dice Walls")
+            self.toggle_walls_btn.setText("Hide Outer Walls")
+            self.statusBar.showMessage("Showing complete dice with walls")
         else:
-            self.toggle_walls_btn.setText("Show Dice Walls")
+            self.toggle_walls_btn.setText("Show Outer Walls")
+            self.statusBar.showMessage("Showing internal structure only (walls hidden)")
             
         # Update visualization if there's a model
         if self.voxel_model is not None:
-            self.update_visualization()
+            # Make sure to keep the same view settings
+            self.update_visualization(preserve_view=True)
     
-    def update_visualization(self):
-        """update the 3D visualization"""
+    def update_visualization(self, preserve_view=False):
+        """update the 3D visualization
+        
+        Args:
+            preserve_view: Whether to preserve the current view angle when updating
+        """
         if self.voxel_model is None:
             self.statusBar.showMessage("error: please load a model or run optimization")
             return
@@ -586,15 +673,23 @@ class DiceVisualizationApp(QMainWindow):
             # Clear the previous graphics
             self.canvas.axes.clear()
             
+            # Use the probabilities from optimization results if available
+            display_probs = self.result_probabilities if self.result_probabilities is not None else self.probabilities
+            
+            # Get wall thickness from GUI input
+            wall_thickness = self.wall_thickness_input.value()
+            
             # Use the visualization function to render directly on our canvas
             # Pass our canvas axes and set show=False to avoid creating a separate window
             visualize_dice(
                 self.voxel_model, 
-                self.probabilities, 
+                display_probs, 
                 filename=None, 
                 target_ax=self.canvas.axes,
                 show=False,
-                show_walls=self.show_walls  # Pass the walls visibility setting
+                show_walls=self.show_walls,  # Pass the walls visibility setting
+                wall_thickness=wall_thickness,  # Pass the wall thickness parameter
+                preserve_view=preserve_view  # Pass the preserve_view flag
             )
             
             # Refresh the canvas
@@ -612,6 +707,7 @@ def main():
     app = QApplication(sys.argv)
     window = DiceVisualizationApp()
     window.show()
+    window.showFullScreen()
     sys.exit(app.exec_())
 
 

@@ -30,7 +30,7 @@ def save_to_stl(vertices, faces, filename="assets/biased_dice_blocky.stl"):
         print(f"Error saving STL file: {e}")
         print(f"Vertices shape: {vertices.shape}, Faces shape: {faces.shape}")
 
-def visualize_dice(voxels, probabilities, filename="biased_dice_viz.png", target_ax=None, show=True, show_walls=True):
+def visualize_dice(voxels, probabilities, filename="biased_dice_viz.png", target_ax=None, show=True, show_walls=True, wall_thickness=1, preserve_view=False):
     """
     Visualize the biased dice in 3D with labeled faces and probability information.
     
@@ -40,7 +40,9 @@ def visualize_dice(voxels, probabilities, filename="biased_dice_viz.png", target
         filename: Output filename for the visualization
         target_ax: Target matplotlib axis to draw on (if None, create a new figure)
         show: Whether to display the figure with plt.show()
-        show_walls: Whether to display the dice walls or only the structure
+        show_walls: Whether to display the dice walls or only the internal structure
+        wall_thickness: Thickness of the dice walls in voxels
+        preserve_view: Whether to preserve the current view angle (only used with target_ax)
     
     Returns:
         fig, ax: The matplotlib figure and axis objects
@@ -48,9 +50,18 @@ def visualize_dice(voxels, probabilities, filename="biased_dice_viz.png", target
     if target_ax is None:
         fig = plt.figure(figsize=(12, 8))
         ax = fig.add_subplot(111, projection='3d')
+        preserve_view = False  # Cannot preserve view for new figure
     else:
         ax = target_ax
         fig = ax.figure
+        
+        # Store current view angle before clearing
+        if preserve_view and hasattr(ax, 'elev') and hasattr(ax, 'azim'):
+            current_elev = ax.elev
+            current_azim = ax.azim
+        else:
+            current_elev = 30
+            current_azim = -60
     
     resolution = voxels.shape[0]
     
@@ -84,26 +95,47 @@ def visualize_dice(voxels, probabilities, filename="biased_dice_viz.png", target
         (resolution, resolution/2, resolution/2)     # Right
     ]
     
-    # Visualize the voxel model with or without walls
-    if show_walls:
-        # Show with normal walls
-        ax.voxels(voxels, facecolors='lightgray', edgecolors='gray', alpha=0.7)
-    else:
-        # Show structure only - create wireframe view by making faces transparent
-        ax.voxels(voxels, facecolors='lightgray', edgecolors='gray', alpha=0.1)
+    # Create a modified voxel array for visualization
+    display_voxels = voxels.copy()
+    
+    # If not showing walls, create a mask for the wall voxels based on wall_thickness
+    if not show_walls:
+        # Create wall mask - identifying which voxels are part of the wall
+        wall_mask = np.zeros_like(voxels, dtype=bool)
         
-        # Add edges to better visualize the structure without walls
-        for i in range(resolution):
-            for j in range(resolution):
-                for k in range(resolution):
-                    if voxels[i, j, k]:
-                        # Only draw edges for voxels that exist
-                        if i > 0 and voxels[i-1, j, k]:
-                            ax.plot([i-0.5, i+0.5], [j, j], [k, k], 'k-', linewidth=0.5)
-                        if j > 0 and voxels[i, j-1, k]:
-                            ax.plot([i, i], [j-0.5, j+0.5], [k, k], 'k-', linewidth=0.5)
-                        if k > 0 and voxels[i, j, k-1]:
-                            ax.plot([i, i], [j, j], [k-0.5, k+0.5], 'k-', linewidth=0.5)
+        # Mark each layer of walls according to the wall_thickness
+        for layer in range(wall_thickness):
+            wall_mask[layer, :, :] = True
+            wall_mask[resolution-1-layer, :, :] = True
+            wall_mask[:, layer, :] = True
+            wall_mask[:, resolution-1-layer, :] = True
+            wall_mask[:, :, layer] = True
+            wall_mask[:, :, resolution-1-layer] = True
+        
+        # Create a version with internal structure only by keeping non-wall voxels
+        internal_voxels = voxels & ~wall_mask
+        
+        # Use the internal voxels for display
+        display_voxels = internal_voxels
+    
+    # Visualize the voxel model consistently
+    voxel_colors = np.empty(display_voxels.shape, dtype=object)
+    voxel_colors[display_voxels] = 'lightgray'
+    
+    # Display the voxels with consistent style
+    ax.voxels(display_voxels, facecolors=voxel_colors, edgecolors='gray', alpha=0.7)
+    
+    # Set consistent axis limits regardless of wall visibility
+    ax.set_xlim(0, resolution)
+    ax.set_ylim(0, resolution)
+    ax.set_zlim(0, resolution)
+    
+    # Restore original view angle if we're using an existing axis
+    if target_ax is not None and preserve_view:
+        ax.view_init(elev=current_elev, azim=current_azim)
+    else:
+        # Default view angle for new figures
+        ax.view_init(elev=30, azim=-60)
     
     # Add labels for each face with size proportional to probability
     for i, (pos, prob) in enumerate(zip(face_positions, probabilities)):
@@ -130,7 +162,7 @@ def visualize_dice(voxels, probabilities, filename="biased_dice_viz.png", target
         )
     
     # Calculate the center of mass
-    total_mass = np.sum(voxels)
+    total_mass = np.sum(voxels)  # Always use the full voxel model for CoM calculation
     if total_mass > 0:
         x = y = z = np.linspace(0.5 / resolution, 1 - 0.5 / resolution, resolution)
         X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
@@ -155,12 +187,21 @@ def visualize_dice(voxels, probabilities, filename="biased_dice_viz.png", target
                 'purple', linewidth=2, label='bias vector')
     
     # Add title and legend
-    ax.set_title('biased dice visualization', fontsize=16)
+    display_mode = "Full Dice" if show_walls else "Internal Structure Only"
+    ax.set_title(f'Biased Dice Visualization - {display_mode}', fontsize=16)
     ax.legend()
+    
+    # Ensure consistent aspect ratio
     ax.set_box_aspect([1,1,1])
+    
+    # Set axis labels
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
+    
+    # Force the aspect ratio to be equal and fix it
+    # This ensures the cube looks like a cube and not stretched
+    ax.set_aspect('equal')
     
     # Add probability information (only if creating a new figure)
     if target_ax is None:

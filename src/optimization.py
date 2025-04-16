@@ -13,28 +13,55 @@ except ImportError:
 # Helper Functions
 # ===========================================
 
-def create_outer_layer_mask(resolution):
-    """Create a mask for the outer layer of voxels"""
+def create_outer_layer_mask(resolution, wall_thickness=1):
+    """Create a mask for the outer layer of voxels with specified thickness
+    
+    Args:
+        resolution: The size of the voxel grid
+        wall_thickness: The thickness of the outer wall (in voxels)
+    
+    Returns:
+        A boolean array where True indicates voxels that should remain fixed (wall voxels)
+    """
     mask = np.zeros((resolution, resolution, resolution), dtype=bool)
-    mask[0, :, :] = mask[-1, :, :] = True
-    mask[:, 0, :] = mask[:, -1, :] = True
-    mask[:, :, 0] = mask[:, :, -1] = True
+    
+    # For each layer of the wall thickness
+    for layer in range(wall_thickness):
+        mask[layer, :, :] = mask[resolution-1-layer, :, :] = True
+        mask[:, layer, :] = mask[:, resolution-1-layer, :] = True
+        mask[:, :, layer] = mask[:, :, resolution-1-layer] = True
+    
     return mask
 
-def is_cube_shell_intact(voxels):
-    """check if the cube shell is intact"""
+def is_cube_shell_intact(voxels, wall_thickness=1):
+    """Check if the cube shell is intact with specified thickness
+    
+    Args:
+        voxels: 3D numpy array representing the voxel model
+        wall_thickness: The required thickness of the outer wall (in voxels)
+    
+    Returns:
+        True if the cube shell has the required thickness, False otherwise
+    """
     resolution = voxels.shape[0]
-    return (
-        np.all(voxels[0, :, :] == 1) and
-        np.all(voxels[-1, :, :] == 1) and
-        np.all(voxels[:, 0, :] == 1) and
-        np.all(voxels[:, -1, :] == 1) and
-        np.all(voxels[:, :, 0] == 1) and
-        np.all(voxels[:, :, -1] == 1)
-    )
+    
+    # Check each layer of the wall
+    for layer in range(wall_thickness):
+        # Check if any voxel in the current wall layer is empty (0)
+        if (
+            np.any(voxels[layer, :, :] == 0) or
+            np.any(voxels[resolution-1-layer, :, :] == 0) or
+            np.any(voxels[:, layer, :] == 0) or
+            np.any(voxels[:, resolution-1-layer, :] == 0) or
+            np.any(voxels[:, :, layer] == 0) or
+            np.any(voxels[:, :, resolution-1-layer] == 0)
+        ):
+            return False
+    
+    return True
 
 def select_random_internal_voxel(voxels, outer_layer_mask):
-    """Select a random internal voxel"""
+    """Select a random internal voxel that is not part of the wall"""
     internal_voxels = np.logical_and(voxels, ~outer_layer_mask)
     indices = np.where(internal_voxels)
     if len(indices[0]) == 0:
@@ -42,10 +69,10 @@ def select_random_internal_voxel(voxels, outer_layer_mask):
     idx = np.random.randint(len(indices[0]))
     return indices[0][idx], indices[1][idx], indices[2][idx]
 
-def evaluate_solution(voxels, target_probabilities):
+def evaluate_solution(voxels, target_probabilities, wall_thickness=1):
     """Evaluate MSE between current and target probabilities"""
     # check the constraints
-    if not is_cube_shell_intact(voxels) or not is_connected(voxels) or not is_solid_connected(voxels):
+    if not is_cube_shell_intact(voxels, wall_thickness) or not is_connected(voxels) or not is_solid_connected(voxels):
         return float('inf')  # not satisfied, return infinity
         
     # Calculate probability distribution
@@ -58,10 +85,28 @@ def evaluate_solution(voxels, target_probabilities):
 # Voxel Optimization
 # ===========================================
 
-def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=15000, T_initial=0.05, T_min=1e-7, alpha=0.997, progress_callback=None):
-    """Optimize voxel shape using simulated annealing"""
+def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=15000, wall_thickness=1, T_initial=0.05, T_min=1e-7, alpha=0.997, progress_callback=None):
+    """Optimize voxel shape using simulated annealing
+    
+    Args:
+        target_probabilities: Target probability for each face (array of 6 values)
+        resolution: Size of the voxel grid
+        max_iterations: Maximum number of optimization iterations
+        wall_thickness: Thickness of the outer wall in voxels
+        T_initial: Initial temperature for simulated annealing
+        T_min: Minimum temperature
+        alpha: Cooling rate
+        progress_callback: Function to report progress
+        
+    Returns:
+        Optimized voxel model
+    """
+    # Validate wall thickness
+    if wall_thickness * 2 + 2 > resolution:
+        raise ValueError(f"Wall thickness {wall_thickness} is too large for resolution {resolution}. Maximum allowed is {(resolution - 2) // 2}.")
+    
     voxels = np.ones((resolution, resolution, resolution), dtype=bool)
-    outer_layer_mask = create_outer_layer_mask(resolution)
+    outer_layer_mask = create_outer_layer_mask(resolution, wall_thickness)
 
     # initialize a cube with a cavity, ensuring connectivity
     center = resolution // 2
@@ -71,11 +116,11 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
     
     # Pattern 1: Medium central cavity (larger than original)
     pattern1 = voxels.copy()
-    cavity_size = resolution // 3  # Increase cavity size
+    cavity_size = max(1, resolution // 3 - wall_thickness)  # Adjust cavity size based on wall thickness
     for i in range(center-cavity_size, center+cavity_size+1):
         for j in range(center-cavity_size, center+cavity_size+1):
             for k in range(center-cavity_size, center+cavity_size+1):
-                if 1 <= i < resolution-1 and 1 <= j < resolution-1 and 1 <= k < resolution-1:
+                if wall_thickness <= i < resolution-wall_thickness and wall_thickness <= j < resolution-wall_thickness and wall_thickness <= k < resolution-wall_thickness:
                     pattern1[i, j, k] = False
     
     # Pattern 2: Extended cavity in the bias direction with gradual tapering
@@ -91,9 +136,9 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
     
     # Create a larger cavity in the direction opposite to bias
     opposite_dir = (-bias_dir[0], -bias_dir[1], -bias_dir[2])
-    for i in range(1, resolution-1):
-        for j in range(1, resolution-1):
-            for k in range(1, resolution-1):
+    for i in range(wall_thickness, resolution-wall_thickness):
+        for j in range(wall_thickness, resolution-wall_thickness):
+            for k in range(wall_thickness, resolution-wall_thickness):
                 # Compute distance from center
                 di = i - center
                 dj = j - center
@@ -108,7 +153,7 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
                 # Create elongated cavity
                 # Keep voxels in the bias direction, remove in opposite direction
                 # Use a larger cavity threshold
-                cavity_threshold = resolution // 2
+                cavity_threshold = resolution // 2 - wall_thickness
                 if manhattan_dist < cavity_threshold and proj_dist < 0:
                     # Gradually increase probability of being cavity as we get further in opposite direction
                     cavity_prob = min(1.0, abs(proj_dist) / (cavity_threshold/2))
@@ -119,11 +164,11 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
     pattern3 = voxels.copy()
     # Create a tube along the axis opposite to the bias direction
     axis = np.argmax(np.abs(bias_dir))
-    tube_radius = resolution // 4
+    tube_radius = max(1, resolution // 4 - wall_thickness)
     
-    for i in range(1, resolution-1):
-        for j in range(1, resolution-1):
-            for k in range(1, resolution-1):
+    for i in range(wall_thickness, resolution-wall_thickness):
+        for j in range(wall_thickness, resolution-wall_thickness):
+            for k in range(wall_thickness, resolution-wall_thickness):
                 # Compute distance from center along the specified axis
                 coords = [i, j, k]
                 axis_dist = coords[axis] - center
@@ -159,8 +204,8 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
     # Score the valid patterns
     pattern_scores = []
     for pattern, idx in valid_patterns:
-        if is_cube_shell_intact(pattern) and is_connected(pattern) and is_solid_connected(pattern):
-            score = evaluate_solution(pattern, target_probabilities)
+        if is_cube_shell_intact(pattern, wall_thickness) and is_connected(pattern) and is_solid_connected(pattern):
+            score = evaluate_solution(pattern, target_probabilities, wall_thickness)
             pattern_scores.append((score, idx))
         else:
             # The pattern is invalid even after fixing
@@ -174,13 +219,14 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
         for i in range(center-1, center+2):
             for j in range(center-1, center+2):
                 for k in range(center-1, center+2):
-                    simple_pattern[i, j, k] = False
+                    if wall_thickness <= i < resolution-wall_thickness and wall_thickness <= j < resolution-wall_thickness and wall_thickness <= k < resolution-wall_thickness:
+                        simple_pattern[i, j, k] = False
         
         # Create a path from center to one side
         side = max_prob_idx // 2  # Convert to axis (0=z, 1=y, 2=x)
         direction = max_prob_idx % 2  # 0=negative, 1=positive
         
-        path_length = resolution // 3
+        path_length = max(1, resolution // 3 - wall_thickness)
         coords = [center, center, center]
         
         # Determine step direction (-1 or 1)
@@ -189,11 +235,11 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
         # Create path
         for offset in range(path_length):
             coords[side] = center + step * offset
-            if 1 <= coords[0] < resolution-1 and 1 <= coords[1] < resolution-1 and 1 <= coords[2] < resolution-1:
+            if wall_thickness <= coords[0] < resolution-wall_thickness and wall_thickness <= coords[1] < resolution-wall_thickness and wall_thickness <= coords[2] < resolution-wall_thickness:
                 simple_pattern[coords[0], coords[1], coords[2]] = False
         
         voxels = simple_pattern
-        current_score = evaluate_solution(voxels, target_probabilities)
+        current_score = evaluate_solution(voxels, target_probabilities, wall_thickness)
     else:
         # Sort by score and select the best
         pattern_scores.sort()
@@ -233,7 +279,7 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
             try:
                 progress_callback(progress_percent / 100, current_score, voxels.copy())
             except TypeError:
-                # 如果回调函数不接受全部参数，则只传递进度值
+                # if the callback function does not accept all parameters, only pass the progress value
                 try:
                     progress_callback(progress_percent / 100)
                 except Exception as e:
@@ -264,18 +310,18 @@ def optimize_biased_dice(target_probabilities, resolution=20, max_iterations=150
             temp_voxels[x, y, z] = not temp_voxels[x, y, z]
             
             # Check intermediate validity for performance
-            if not is_cube_shell_intact(temp_voxels):
+            if not is_cube_shell_intact(temp_voxels, wall_thickness):
                 temp_voxels[x, y, z] = not temp_voxels[x, y, z]  # Revert
                 continue
         
         # check if the modified cube satisfies all constraints
-        if not is_cube_shell_intact(temp_voxels) or not is_connected(temp_voxels) or not is_solid_connected(temp_voxels):
+        if not is_cube_shell_intact(temp_voxels, wall_thickness) or not is_connected(temp_voxels) or not is_solid_connected(temp_voxels):
             continue  # not satisfied, skip this modification
         
         valid_modification = True
         
         if valid_modification:
-            new_score = evaluate_solution(temp_voxels, target_probabilities)
+            new_score = evaluate_solution(temp_voxels, target_probabilities, wall_thickness)
             delta_E = new_score - current_score
 
             # according to the simulated annealing algorithm, decide whether to accept the modification
