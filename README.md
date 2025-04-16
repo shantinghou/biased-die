@@ -1,59 +1,69 @@
-# Biased Die Project
+# Biased Dice Design Tool
 
-This project uses LibIGL to design and optimize an octahedral die with biased internal density distribution, making it more likely to land on a target face.
+A tool for designing biased dice with customizable probability distributions through voxel model optimization.
 
 ## Project Structure
 
-- `src/` - Source code
-- `include/` - Header files and external libraries
-- `assets/` - 3D models and output files
-- `CMakeLists.txt` - Build configuration
-
-## Requirements
-
-- C++17 compiler
-- CMake 3.16+
-- LibIGL (automatically fetched by CMake)
-- Eigen3
-
-## Building the Project
-
-```bash
-mkdir build
-cd build
-cmake ..
-make
+```
+src/
+├── main.py - Main entry point and user interface
+├── optimization.py - Simulated annealing algorithm and voxel optimization
+├── probability_models.py - Probability calculation based on solid angles based on Centroid Solid Angle Model
+├── mesh_generation.py - 3D mesh generation from voxel models
+├── connectivity.py - Connectivity validation for dice structure
+└── visualization.py - Visualization and STL export
 ```
 
-## Running the Program
+## Features
 
-From the build directory:
+- Voxel model optimization with simulated annealing
+- Multiple initialization patterns for different bias profiles
+- Connectivity validation to ensure structural integrity
+- Probability calculation using solid angle method
+- 3D visualization of dice with probability distribution
+- STL export for 3D printing
 
-```bash
-./biased_die
+## Dependencies
+
+```
+numpy
+scipy
+meshio
+open3d
+scikit-image
+matplotlib
 ```
 
-## How It Works
+## Usage
 
-1. The program loads or generates an octahedral die model
-2. It creates a tetrahedral mesh of the interior
-3. It optimizes the internal density distribution to bias the die toward a target face
-4. A visual representation shows the shifted center of mass
-5. Optional: Export the model for 3D printing with variable infill
+Run the main interface:
 
-## Physics Behind the Bias
+```bash
+python -m src.main
+```
 
-The program shifts the center of mass toward the opposite face of the target face. When the die is rolled:
-- The heaviest side tends to end up at the bottom
-- This makes the opposite side (our target) more likely to end up on top
+The interactive design interface will guide you to:
+1. Select a target probability distribution
+2. Set voxel resolution and iteration count
+3. Generate and visualize the biased dice
+4. Export STL files for 3D printing
 
-## Customization
+## Algorithm
 
-Edit `main.cpp` to change:
-- Target face index
-- Bias strength
-- Density range
+The tool creates biased dice through:
 
-## 3D Printing Notes
+1. Starting with a solid cube and iteratively removing internal voxels
+2. Optimizing voxel distribution via simulated annealing
+3. Maintaining outer shell integrity and internal connectivity
+4. Calculating face probabilities using solid angle method
+5. Generating a 3D mesh for visualization and printing
 
-The current implementation exports a density map that can be used with 3D printing software that supports variable infill patterns. Future versions may include direct export to printer-specific formats.
+graph TD
+    A[main.py] --> B[visualization.py]
+    A --> C[probability_models.py]
+    A --> D[mesh_generation.py]
+    A --> E[optimization.py]
+    E --> F[connectivity.py]
+    E --> C
+    F --> G[is_connected/is_solid_connected]
+
