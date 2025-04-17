@@ -21,23 +21,17 @@ def create_outer_layer_mask(resolution):
     return mask
 
 def is_cube_shell_intact(voxels):
-    return (
-        np.all(voxels[0, :, :] == 1) and
-        np.all(voxels[-1, :, :] == 1) and
-        np.all(voxels[:, 0, :] == 1) and
-        np.all(voxels[:, -1, :] == 1) and
-        np.all(voxels[:, :, 0] == 1) and
-        np.all(voxels[:, :, -1] == 1)
-    )
+    return np.all(voxels[0, :, :] == 1) and np.all(voxels[-1, :, :] == 1) and \
+           np.all(voxels[:, 0, :] == 1) and np.all(voxels[:, -1, :] == 1) and \
+           np.all(voxels[:, :, 0] == 1) and np.all(voxels[:, :, -1] == 1)
 
 def evaluate_solution(voxels, target_probabilities):
     if not (is_cube_shell_intact(voxels) and is_connected(voxels) and is_solid_connected(voxels)):
         return float('inf')
     probs = calculate_probabilities(voxels)
-    return np.mean((probs - target_probabilities)**2)
+    return np.mean((probs - target_probabilities) ** 2)
 
 def select_random_internal_voxel(voxels, outer_layer_mask):
-    """Select a random internal voxel"""
     internal_voxels = np.logical_and(voxels, ~outer_layer_mask)
     indices = np.where(internal_voxels)
     if len(indices[0]) == 0:
@@ -45,38 +39,28 @@ def select_random_internal_voxel(voxels, outer_layer_mask):
     idx = np.random.randint(len(indices[0]))
     return indices[0][idx], indices[1][idx], indices[2][idx]
 
-
-def select_weighted_internal_voxel(voxels, outer_mask, center, bias_dir):
-    """Choose an internal voxel whose removal likely shifts COM toward bias_dir."""
-    # Only consider interior voxels that are currently filled (True)
+def select_weighted_internal_voxel(voxels, outer_mask, center, bias_dirs):
     interior = np.array(np.where((voxels == True) & (~outer_mask))).T
     if interior.shape[0] == 0:
         return None
 
-    # Compute relative vectors from the center
     rel = interior - center  # shape (N,3)
-
-    # Projection onto bias direction: removal shifts COM toward bias_dir when proj < 0
-    proj = bias_dir @ rel.T  # shape (N,)
-    # We want positive weights for proj < 0, so:
+    # Sum projections along all bias directions
+    proj = np.sum([np.dot(bias_dir, rel.T) for bias_dir in bias_dirs], axis=0)
+    
     weights = np.clip(-proj, 0, None).astype(np.float64)
 
     # Fallback to uniform if all weights are zero
     if weights.sum() < 1e-9:
         weights[:] = 1.0
 
-    # Normalize to get a probability distribution
     weights /= weights.sum()
-
-    # Sample one index according to those weights
     idx = np.random.choice(len(weights), p=weights)
     return tuple(interior[idx])
 
 def is_valid_pattern(voxels):
-    """Check if a voxel pattern maintains all required constraints."""
-    return (is_cube_shell_intact(voxels) and 
-            is_connected(voxels) and 
-            is_solid_connected(voxels))
+    return is_cube_shell_intact(voxels) and is_connected(voxels) and is_solid_connected(voxels)
+
 
 # ===========================================
 # Main Optimization
@@ -100,14 +84,14 @@ def optimize_biased_dice(target_probabilities,
 
     # Determine bias direction based on highest probability face
     probs_list = list(target_probabilities)
-    max_idx = probs_list.index(max(probs_list))
+    max_value = max(probs_list) - 0.25
+    max_indices = [i for i, value in enumerate(probs_list) if value >= max_value]
     directions = [
         (0,0,-1), (0,0,1),   # Z-axis (faces 0,1)
         (0,-1,0), (0,1,0),   # Y-axis (faces 2,3)
         (-1,0,0), (1,0,0)    # X-axis (faces 4,5)
     ]
-    bias_dir = np.array(directions[max_idx])
-    # add patterns for multiple max index
+    bias_dirs = [np.array(directions[i]) for i in max_indices]
     
     patterns = []
     
@@ -118,14 +102,12 @@ def optimize_biased_dice(target_probabilities,
     for i in range(center[0]-cavity_size, center[0]+cavity_size+1):
         for j in range(center[1]-cavity_size, center[1]+cavity_size+1):
             for k in range(center[2]-cavity_size, center[2]+cavity_size+1):
-                # Ensure we stay within interior voxels
                 if 1 <= i < resolution-1 and 1 <= j < resolution-1 and 1 <= k < resolution-1:
                     pattern1[i,j,k] = False
-    
-    # Verify pattern maintains cube integrity
+
     if is_valid_pattern(pattern1):
         patterns.append(pattern1)
-    
+
     # === Pattern 2: Extended Cavity with Tapering ===
     pattern2 = voxels.copy()
     threshold = resolution // 2
@@ -133,150 +115,77 @@ def optimize_biased_dice(target_probabilities,
     for i in range(1, resolution-1):
         for j in range(1, resolution-1):
             for k in range(1, resolution-1):
-                # Calculate position relative to center
                 rel_pos = np.array([i - center[0], j - center[1], k - center[2]])
                 manhattan_dist = np.sum(np.abs(rel_pos))
-                # Projection along bias direction
-                projection = np.dot(bias_dir, rel_pos)
-                
-                # Only carve in direction opposite to highest probability face
-                if manhattan_dist < threshold and projection < 0:
-                    # Probability increases with distance from center along bias
-                    carve_prob = min(1.0, abs(projection) / (threshold/2))
-                    if np.random.random() < carve_prob:
-                        # Try removing the voxel
-                        test = pattern2.copy()
-                        test[i, j, k] = False
-                        
-                        # Only accept if constraints are maintained
-                        if is_valid_pattern(test):
-                            pattern2[i, j, k] = False
-    
+
+                for bias_dir in bias_dirs:
+                    projection = np.dot(bias_dir, rel_pos)
+                    
+                    if manhattan_dist < threshold and projection < 0:
+                        carve_prob = min(1.0, abs(projection) / (threshold/2))
+                        if np.random.random() < carve_prob:
+                            test = pattern2.copy()
+                            test[i, j, k] = False
+                            
+                            if is_valid_pattern(test):
+                                pattern2[i, j, k] = False
+
     if is_valid_pattern(pattern2):
         patterns.append(pattern2)
     
     # === Pattern 3: Tube-Like Cavity ===
     pattern3 = voxels.copy()
-    axis = np.argmax(np.abs(bias_dir))
+    axis = np.argmax(np.abs(bias_dirs[0]))  # Assuming bias_dirs are normalized
     tube_radius = resolution // 4
     
     for i in range(1, resolution-1):
         for j in range(1, resolution-1):
             for k in range(1, resolution-1):
                 coords = np.array([i, j, k])
-                # Distance along primary axis
                 axis_dist = coords[axis] - center[axis]
-                # Make sure we're carving on side opposite to highest probability
-                axis_projection = axis_dist * bias_dir[axis]
                 
-                # Calculate perpendicular distance from axis
-                coords_2d = np.delete(coords, axis)
-                center_2d = np.delete(center, axis)
-                perp_dist = np.linalg.norm(coords_2d - center_2d)
-                
-                # Carve tube in direction away from highest probability face
-                if axis_projection < 0 and perp_dist < tube_radius:
-                    test = pattern3.copy()
-                    test[i, j, k] = False
-                    if is_valid_pattern(test):
-                        pattern3[i, j, k] = False
-    
+                for bias_dir in bias_dirs:
+                    axis_projection = axis_dist * bias_dir[axis]
+                    coords_2d = np.delete(coords, axis)
+                    center_2d = np.delete(center, axis)
+                    perp_dist = np.linalg.norm(coords_2d - center_2d)
+                    
+                    if axis_projection < 0 and perp_dist < tube_radius:
+                        test = pattern3.copy()
+                        test[i, j, k] = False
+                        if is_valid_pattern(test):
+                            pattern3[i, j, k] = False
+                            
     if is_valid_pattern(pattern3):
         patterns.append(pattern3)
     
     # === Pattern 4: Wedge Cavity ===
     pattern4 = voxels.copy()
-    opposite_dir = -bias_dir
-    # 30-degree angle threshold (cos(π/6))
-    angle_threshold = np.cos(np.pi/6)  
+    opposite_dir = -bias_dirs[0]  # Using the first bias_dir as the primary direction
+    angle_threshold = np.cos(np.pi/6)
     wedge_threshold = resolution // 5
     
     for i in range(1, resolution-1):
         for j in range(1, resolution-1):
             for k in range(1, resolution-1):
                 rel_pos = np.array([i, j, k]) - center
-                # Skip center voxel
                 if np.linalg.norm(rel_pos) == 0:
                     continue
                     
-                # Projection along opposite direction to bias
                 projection = np.dot(rel_pos, opposite_dir)
-                
-                # Only carve if projection exceeds threshold and alignment is good
                 if projection > wedge_threshold:
-                    # Cosine of angle between vector and opposite_dir
                     alignment = projection / np.linalg.norm(rel_pos)
                     if alignment > angle_threshold:
                         test = pattern4.copy()
                         test[i, j, k] = False
                         if is_valid_pattern(test):
                             pattern4[i, j, k] = False
-    
+                            
     if is_valid_pattern(pattern4):
         patterns.append(pattern4)
     
-    # === Pattern 5: Ellipsoidal Cavity ===
+    # === Pattern 5: Face-Centered Dome ===
     pattern5 = voxels.copy()
-    offset = resolution // 8
-    
-    # Place cavity center offset from cube center away from highest probability face
-    cavity_center = center - bias_dir * offset
-    
-    # Elongate ellipsoid along bias direction
-    radius_along = resolution // 4
-    radius_perp = resolution // 6
-    
-    # Set radii based on bias direction
-    radii = np.full(3, radius_perp, dtype=np.float64)
-    axis = np.nonzero(bias_dir)[0][0]  # Find non-zero axis of bias_dir
-    radii[axis] = radius_along
-    
-    # Carve ellipsoid
-    for i in range(1, resolution-1):
-        for j in range(1, resolution-1):
-            for k in range(1, resolution-1):
-                pos = np.array([i, j, k], dtype=np.float64)
-                rel_pos = pos - cavity_center
-                
-                # Check if point is inside ellipsoid: (x/a)² + (y/b)² + (z/c)² ≤ 1
-                if np.sum((rel_pos / radii)**2) <= 1.0:
-                    test = pattern5.copy()
-                    test[i, j, k] = False
-                    if is_valid_pattern(test):
-                        pattern5[i, j, k] = False
-    
-    if is_valid_pattern(pattern5):
-        patterns.append(pattern5)
-    
-    # === Pattern 6: Spherical-Cap (Dome) Cavity === 
-    pattern6 = voxels.copy()
-    p = target_probabilities[max_idx]
-    radius = resolution * 0.3
-    
-    # Calculate cap height offset based on probability
-    # Higher probability = smaller cavity on opposite side
-    cap_depth = np.clip(radius * (1 - 2*p), 0.1, radius - 0.1)
-    cap_center = center - bias_dir * cap_depth
-    
-    for i in range(1, resolution-1):
-        for j in range(1, resolution-1):
-            for k in range(1, resolution-1):
-                pos = np.array([i, j, k])
-                # Only carve on opposite side to highest probability face
-                if np.dot(pos - center, bias_dir) < 0:
-                    if np.linalg.norm(pos - cap_center) <= radius:
-                        test = pattern6.copy()
-                        test[i, j, k] = False
-                        if is_valid_pattern(test):
-                            pattern6[i, j, k] = False
-    
-    if is_valid_pattern(pattern6):
-        patterns.append(pattern6)
-    
-    # === Pattern 7: Face-Centered Dome ===
-    pattern7 = voxels.copy()
-    # Set radius to half the cube width
-    sphere_radius = resolution // 2
 
     # Calculate face centers in index space
     face_centers = [
@@ -288,70 +197,98 @@ def optimize_biased_dice(target_probabilities,
         np.array([resolution-1, center[1], center[2]])   # right (X+)
     ]
 
-    # Find the opposite face index (faces are in pairs: 0-1, 2-3, 4-5)
-    opposite_idx = max_idx + 1 if max_idx % 2 == 0 else max_idx - 1
-    opposite_face = face_centers[opposite_idx]
+    # Calculate scaled radii based on probability weights
+    probs_array = np.array(probs_list)
+    scaled_probs = probs_array / np.sum(probs_array)  # Normalize probabilities
+    base_radius = resolution // 2
+    max_radius_adjustment = resolution // 4
+    radii = {}
 
-    # Place sphere center at the opposite face center
-    sphere_center = opposite_face
+    # Calculate radius for each face based on its probability
+    for idx, prob in enumerate(probs_list):
+        # Higher probability = smaller cavity = larger radius
+        # Scale inversely proportional to the probability
+        weight_factor = 1 - (scaled_probs[idx] / max(scaled_probs))
+        radius_reduction = weight_factor * max_radius_adjustment
+        radii[idx] = base_radius - radius_reduction
 
-    # Carve everything OUTSIDE the sphere but INSIDE the cube
+    # Create a mask to track which voxels are protected by any dome
+    protected_voxels = np.zeros((resolution, resolution, resolution), dtype=bool)
+
+    # First pass: Mark all voxels that should be protected by any dome
+    for max_idx in max_indices:
+        # Find the opposite face index
+        opposite_idx = max_idx + 1 if max_idx % 2 == 0 else max_idx - 1
+        opposite_face = face_centers[opposite_idx]
+        bias_dir = bias_dirs[max_indices.index(max_idx)]
+        
+        # Get probability-adjusted radius for this face
+        sphere_radius = radii[max_idx]
+        
+        # Place sphere center at the opposite face center
+        sphere_center = opposite_face
+        
+        # Mark voxels protected by this dome
+        for i in range(1, resolution-1):
+            for j in range(1, resolution-1):
+                for k in range(1, resolution-1):
+                    pos = np.array([i, j, k])
+                    # Check if voxel is within this dome
+                    if np.linalg.norm(pos - sphere_center) <= sphere_radius:
+                        protected_voxels[i, j, k] = True
+
+    # Second pass: Carve voxels that are not protected by any dome
     for i in range(1, resolution-1):
         for j in range(1, resolution-1):
             for k in range(1, resolution-1):
-                pos = np.array([i, j, k])
-                # Only modify voxels on interior side of opposite face
-                if np.dot(pos - opposite_face, -bias_dir) < 0:
-                    # Keep sphere, remove everything else
-                    if np.linalg.norm(pos - sphere_center) <= sphere_radius:
-                        test = pattern7.copy()
-                        test[i, j, k] = False
-                        if is_valid_pattern(test):
-                            pattern7[i, j, k] = False
+                if not protected_voxels[i, j, k]:
+                    # Only carve if maintaining pattern validity
+                    test = pattern5.copy()
+                    test[i, j, k] = False
+                    if is_valid_pattern(test):
+                        pattern5[i, j, k] = False
+
+    # After processing all domes
+    if is_valid_pattern(pattern5):
+        patterns.append(pattern5)
+
+    # === Pattern 6: Combined Biases Cavity ===
+    pattern6 = voxels.copy()
     
-    if is_valid_pattern(pattern7):
-        patterns.append(pattern7)
+    for i in range(1, resolution-1):
+        for j in range(1, resolution-1):
+            for k in range(1, resolution-1):
+                rel_pos = np.array([i - center[0], j - center[1], k - center[2]])
+                combined_projection = 0
+
+                for bias_dir in bias_dirs:
+                    combined_projection += np.dot(bias_dir, rel_pos)
+                
+                if combined_projection < 0:  # Carve away from the center in the combined bias direction
+                    test = pattern6.copy()
+                    test[i, j, k] = False
+                    if is_valid_pattern(test):
+                        pattern6[i, j, k] = False
+                        
+    if is_valid_pattern(pattern6):
+        patterns.append(pattern6)
 
     # Report pattern statistics
     for i, pattern in enumerate(patterns):
         cavity_size = np.sum(pattern == False)
         print(f"Pattern {i+1} created with {cavity_size} voxels removed")
 
-
+    # Select the best pattern and perform optimization
     candidates = []
-    print("Initial pattern performance:")
     for idx, pat in enumerate(patterns, start=1):
         if not np.any(pat == 0):
-            # no cavity at all
-            print(f"  Pattern {idx}: no cavity (skipped)")
             continue
 
         fixed = ensure_connectivity(pat)
-        valid = (
-            is_cube_shell_intact(fixed)
-            and is_connected(fixed)
-            and is_solid_connected(fixed)
-        )
-        if not valid:
-            print(f"  Pattern {idx}: invalid (connectivity or shell failed)")
-            continue
-
-        score = evaluate_solution(fixed, target_probabilities)
-        print(f"  Pattern {idx}: score = {score:.6f}")
-        candidates.append((score, idx, fixed))
-
-    # Fallback if none valid
-    if not candidates:
-        # small central cavity
-        fallback = voxels.copy()
-        for d in range(3):
-            for delta in (-1,0,1):
-                idx = center.copy()
-                idx[d] += delta
-                fallback[tuple(idx)] = False
-        score = evaluate_solution(fallback, target_probabilities)
-        print(f"  Fallback: score = {score:.6f}")
-        candidates = [(score, 0, fallback)]
+        valid = is_cube_shell_intact(fixed) and is_connected(fixed) and is_solid_connected(fixed)
+        if valid:
+            score = evaluate_solution(fixed, target_probabilities)
+            candidates.append((score, idx, fixed))
 
     # Choose best starting pattern
     candidates.sort(key=lambda x: x[0])
@@ -360,7 +297,7 @@ def optimize_biased_dice(target_probabilities,
     best_voxels = voxels.copy()
     print(f"Selected initial pattern {best_pattern_idx} with score {best_score:.6f}")
 
-       # Annealing setup with spherical bias
+    # Annealing setup with spherical bias
     T = T_initial
     phase1_iters = max_iterations // 3
     iteration_history, score_history, temp_history = [], [], []
@@ -371,8 +308,12 @@ def optimize_biased_dice(target_probabilities,
     R_min = 0.2 * resolution
     R_max = 0.5 * resolution
     rim_width = resolution / 8
-    opposite_idx = max_idx + 1 if max_idx % 2 == 0 else max_idx - 1
+    
+    # Get the first max index to determine opposite face
+    primary_max_idx = max_indices[0]
+    opposite_idx = primary_max_idx + 1 if primary_max_idx % 2 == 0 else primary_max_idx - 1
     opposite_face_center = face_centers[opposite_idx]
+    primary_bias_dir = bias_dirs[0]  # Use the first bias direction for optimization
 
     # Main loop
     for it in range(max_iterations):
@@ -408,10 +349,10 @@ def optimize_biased_dice(target_probabilities,
                     sel = rim_candidates[np.random.randint(len(rim_candidates))][0]
                 else:
                     # fallback to weighted‐COM sampling
-                    sel = select_weighted_internal_voxel(voxels, outer_mask, center, bias_dir)
+                    sel = select_weighted_internal_voxel(voxels, outer_mask, center, bias_dirs)
             else:
-                # 30%: your original weighted‐COM selection
-                sel = select_weighted_internal_voxel(voxels, outer_mask, center, bias_dir)
+                # 30%: weighted‐COM selection
+                sel = select_weighted_internal_voxel(voxels, outer_mask, center, bias_dirs)
 
             if sel is None:
                 continue
@@ -479,23 +420,5 @@ def optimize_biased_dice(target_probabilities,
             score_history.append(current_score)
             temp_history.append(T)
     
-    # smoothing function
-    # --- Final greedy hill‑climb (unchanged) ---
-    improved = True
-    while improved:
-        improved = False
-        for x,y,z in np.array(np.where((best_voxels == True) & (~outer_mask))).T:
-            temp = best_voxels.copy()
-            temp[x,y,z] = False
-            if not (is_cube_shell_intact(temp)
-                    and is_connected(temp)
-                    and is_solid_connected(temp)):
-                continue
-            new_score = evaluate_solution(temp, target_probabilities)
-            if new_score < best_score:
-                best_voxels = temp
-                best_score = new_score
-                improved = True
-
     # Return the best found configuration
     return best_voxels
