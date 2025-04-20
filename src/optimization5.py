@@ -4,10 +4,12 @@ try:
     # When running from project root
     from src.connectivity import is_connected, is_solid_connected, ensure_connectivity
     from src.probability_models import calculate_probabilities
+    from src.overhang import remove_overhang
 except ImportError:
     # When running from src directory
     from connectivity import is_connected, is_solid_connected, ensure_connectivity
     from probability_models import calculate_probabilities
+    from overhang import remove_overhang
 
 # ===========================================
 # Helper Functions
@@ -420,5 +422,11 @@ def optimize_biased_dice(target_probabilities,
             score_history.append(current_score)
             temp_history.append(T)
     
+    # return best_voxels
+    
+    # 1) Orient so the most weighted face is on the build plate (z=0)
+    face_idx = int(np.argmax(target_probabilities))
+    voxels_clean = remove_overhang(best_voxels, face_idx)
+
     # Return the best found configuration
-    return best_voxels
+    return voxels_clean
