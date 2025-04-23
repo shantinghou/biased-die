@@ -6,12 +6,13 @@ A tool for designing biased dice with customizable probability distributions thr
 
 ```
 src/
-├── main.py - Main entry point and user interface
-├── optimization.py - Simulated annealing algorithm and voxel optimization
+├── dice_designer_cli.py - CLI implementation of the biased dice designer
+├── dice_designer_gui.py - GUI implementation of the biased dice designer
+├── final_optimization.py - Simulated annealing algorithm and voxel optimization
 ├── probability_models.py - Probability calculation based on solid angles based on Centroid Solid Angle Model
 ├── mesh_generation.py - 3D mesh generation from voxel models
 ├── connectivity.py - Connectivity validation for dice structure
-└── visualization.py - Visualization and STL export
+└── visualizer.py - Visualization and STL export
 ```
 
 ## Features
@@ -36,10 +37,10 @@ matplotlib
 
 ## Usage
 
-Run the main interface:
+Run the gui interface (navigate to src folder)
 
 ```bash
-python -m src.main
+python dice_designer_gui.py
 ```
 
 The interactive design interface will guide you to:

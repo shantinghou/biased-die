@@ -423,10 +423,3 @@ def optimize_biased_dice(target_probabilities,
             temp_history.append(T)
     
     return best_voxels
-
-    # # 1) Orient so the most weighted face is on the build plate (z=0)
-    # face_idx = int(np.argmax(target_probabilities))
-    # voxels_clean = remove_overhang(best_voxels, face_idx)
-
-    # # Return the best found configuration
-    # return voxels_clean

@@ -14,13 +14,15 @@ try:
     from src.visualizer import visualize_dice, save_to_stl
     from src.probability_models import calculate_solid_angles
     from src.mesh_generation import create_blocky_mesh_from_voxels
-    from src.optimization import optimize_biased_dice
+    from src.final_optimization import optimize_biased_dice
+    # from src.optimization3 import optimize_biased_dice_3
 except ImportError:
     # When running from src directory
     from visualizer import visualize_dice, save_to_stl
     from probability_models import calculate_solid_angles
     from mesh_generation import create_blocky_mesh_from_voxels
-    from optimization import optimize_biased_dice
+    from final_optimization import optimize_biased_dice
+    # from src.optimization3 import optimize_biased_dice_3
 
 # ===========================================
 # Main Function
