@@ -4,12 +4,10 @@ try:
     # When running from project root
     from src.connectivity import is_connected, is_solid_connected, ensure_connectivity
     from src.probability_models import calculate_probabilities
-    from src.overhang import remove_overhang
 except ImportError:
     # When running from src directory
     from connectivity import is_connected, is_solid_connected, ensure_connectivity
     from probability_models import calculate_probabilities
-    from overhang import remove_overhang
 
 # ===========================================
 # Helper Functions
